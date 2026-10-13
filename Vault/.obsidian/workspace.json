@@ -1,0 +1,225 @@
+{
+  "main": {
+    "id": "6b2192dcf1c457fd",
+    "type": "split",
+    "children": [
+      {
+        "id": "28f980d58521d024",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "a235b938c2b13ed8",
+            "type": "leaf",
+            "state": {
+              "type": "empty",
+              "state": {},
+              "icon": "lucide-file",
+              "title": "New tab"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "b11d3a8ddef558c2",
+    "type": "split",
+    "children": [
+      {
+        "id": "18a66d301f7a47cf",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "ed349fe2b9a8909a",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "745aa92ab2b46ca4",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "a75d82f5e62ee416",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "right": {
+    "id": "92789ce204e6bad3",
+    "type": "split",
+    "children": [
+      {
+        "id": "b0e8dd760be4353a",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "b061d03057a41166",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "506a8684bf75859e",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "11fb6b43109ad09d",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "5e5e73ea796de212",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "cfb2b9fdcc9d5cac",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false,
+      "obsidian-excalidraw-plugin:New drawing": false
+    }
+  },
+  "active": "a235b938c2b13ed8",
+  "lastOpenFiles": [
+    "07 Tech stack.md",
+    "10 Code map.md",
+    "mcp/src/api.ts + index.ts.md",
+    "mcp/skill/SKILL.md.md",
+    "ops/Makefile + .env.md",
+    "ops/Dockerfile + docker-compose.md",
+    "ops",
+    "mcp/src/tools.ts.md",
+    "mcp/src/helpers.md",
+    "mcp/src",
+    "mcp/skill",
+    "mcp",
+    "frontend/src/lib.md",
+    "frontend/src/components/pages.md",
+    "frontend/src/components/graph.md",
+    "frontend/src/components/dialogs.md",
+    "frontend/src/route.ts.md",
+    "frontend/src/components",
+    "frontend/src/api.ts + types.ts.md",
+    "frontend/src/App.tsx.md",
+    "frontend/src",
+    "frontend",
+    "backend/src/index.ts.md",
+    "backend/src/app.ts.md",
+    "backend/src",
+    "backend",
+    "09 Scalability and limits.md",
+    "08 Key decisions.md",
+    "00 Overview.md",
+    "03 Issues and sprints.md",
+    "02 Data model.md",
+    "04 Agents (MCP).md",
+    "04 Agents (MCP).excalidraw",
+    "05 Frontend.md",
+    "06 Build and deploy.md",
+    "03 Issues and sprints.excalidraw.md"
+  ]
+}
