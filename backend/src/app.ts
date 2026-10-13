@@ -6,6 +6,7 @@ import os from 'node:os';
 import { timingSafeEqual } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
+import { jiraConfig, jiraTest, jiraDiscover, JiraError } from './jira.js';
 
 class HttpError extends Error {
   constructor(public status: number, public code: string, message: string) {
@@ -292,7 +293,7 @@ export function buildApp(dbPath: string = process.env.DB_PATH ?? './data/pjplann
   const P = (): number => projectStore.getStore() as number;
   app.addHook('onRequest', (req, reply, done) => {
     const path = req.url.split('?')[0];
-    if (!path.startsWith('/api/') || path.startsWith('/api/projects') || path.startsWith('/api/mcp') || path === '/api/health' || path === '/api/access' || path === '/api/unlock') return done();
+    if (!path.startsWith('/api/') || path.startsWith('/api/projects') || path.startsWith('/api/mcp') || path.startsWith('/api/jira') || path === '/api/health' || path === '/api/access' || path === '/api/unlock') return done();
     try {
       const want = req.headers['x-project'] ?? (req.query as any)?.project;
       const row = (want === undefined
@@ -512,6 +513,32 @@ export function buildApp(dbPath: string = process.env.DB_PATH ?? './data/pjplann
   app.post('/api/unlock', async () => ({ ok: true, locked: Boolean(writeKey()) }));
   // Whether writes need a key at all, so the UI can skip the lock when running open.
   app.get('/api/access', async () => ({ locked: Boolean(writeKey()) }));
+
+  // Jira integration. The shared bot's URL and token live in the environment only (JIRA_URL, JIRA_TOKEN); with either unset the
+  // integration is off. Status never calls Jira; test and discover are POST so they need the write key like any other action.
+  const jira = () => {
+    const cfg = jiraConfig();
+    if (!cfg) throw new HttpError(409, 'conflict', 'Jira is not configured: set JIRA_URL and JIRA_TOKEN in .env');
+    return cfg;
+  };
+  const viaJira = async <T>(fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e instanceof JiraError) throw new HttpError(e.status === 404 ? 404 : 502, e.status === 404 ? 'not_found' : 'jira_error', e.message);
+      throw e;
+    }
+  };
+  app.get('/api/jira/status', async () => {
+    const cfg = jiraConfig();
+    return { configured: Boolean(cfg), url: cfg?.url ?? null };
+  });
+  app.post('/api/jira/test', async () => viaJira(() => jiraTest(jira())));
+  app.post('/api/jira/discover', async (req) => {
+    const projectKey = String((req.body as any)?.projectKey ?? '').trim();
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(projectKey)) throw bad('projectKey must be a Jira project key such as PROJ');
+    return viaJira(() => jiraDiscover(jira(), projectKey));
+  });
 
   // Self-contained MCP bundle (built from ../mcp) so users can download it from the UI.
   app.get('/api/mcp/download', async (_req, reply) => {
