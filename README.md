@@ -1,6 +1,74 @@
-# pjPlanner
+<h1 align="center">pjPlanner</h1>
 
-Project planning tool for tracking modules, their owners, and the relations (dependencies) between modules, with a graph view. Node 22 + TypeScript + Fastify + SQLite backend, Vite + React frontend.
+<p align="center">
+  <strong>Planning for dev teams, without the overhead.</strong><br>
+  A simple issue tracker tied to a living map of your system, built to keep documentation and workflow in step.
+</p>
+
+<p align="center">
+  <img alt="Node 22+" src="https://img.shields.io/badge/node-22%2B-3c873a">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178c6">
+  <img alt="Fastify" src="https://img.shields.io/badge/Fastify-5-000000">
+  <img alt="React" src="https://img.shields.io/badge/React-18-61dafb">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-better--sqlite3-003b57">
+  <img alt="MCP" src="https://img.shields.io/badge/MCP-server-8a5cf6">
+</p>
+
+---
+
+## What is it?
+
+Most trackers ask teams to adapt to the tool. pjPlanner goes the other way: it keeps only what a development team uses every day, and makes that part work well.
+
+- **Simple by design.** Four issue types (epic, story, bug, task), two states (open, closed) and one active sprint at a time. There are no custom workflows to configure and no accounts to manage. Anyone on the team can open it and start working.
+- **Documentation that stays current.** You draw your system as modules and the dependencies between them. Each module records its owners and its API items, and every task points at the module it changes. The architecture map is part of the backlog, so it gets updated as the work happens.
+- **A smoother workflow.** Sprints assign owners to unassigned tasks when they start, return unfinished work to the backlog when they close, and order each person's tasks by module dependencies. Less time goes on ticket upkeep and more on shipping.
+- **Built for agents too.** An MCP server lets AI assistants read the plan, map a codebase into modules, and create or update issues, so documentation and tracking can keep up with the code.
+
+It is an open team platform: no login. A single shared write key protects against accidental edits, and everyone can read.
+
+## Features
+
+| | |
+|---|---|
+| **Module graph** | Excalidraw-style card diagram (React Flow + dagre). Drag cards, auto-layout, floating arrows that attach to the nearest card border, snap guides, and group boxes drawn around member cards. |
+| **Modules** | Name, description, several owners, colors, emoji icon and a list of API items. Positions persist. |
+| **Owners & groups** | Owners with colors and icons; groups nest up to 4 levels deep to organise modules by topic. |
+| **Issue tracker** | `epic` / `story` / `bug` / `task` hierarchy. Tasks carry a module, an assignee (who must own that module), a sprint and an estimate. Epics roll up the modules of their children. |
+| **Sprints** | planned → active → closed, one active at a time. Activating auto-assigns owners to unassigned tasks; closing returns open tasks to the backlog. A **timeline** orders each owner's work by module dependencies and estimates. |
+| **Multiple projects** | Everything is scoped to a project. Export one as JSON and import it as a new project. |
+| **MCP server** | Let Claude Code (or any MCP client) read the plan, query transitive dependencies, create modules and issues, and run sprints. Ships with a skill for mapping a codebase into pjPlanner. |
+| **One-command deploy** | A single Docker image serves the API, the UI and the MCP bundle. Data lives in one SQLite file. |
+
+## Quick start
+
+```bash
+git clone <this repo> && cd pjPlanner
+make env            # creates .env from .env.example, then set WRITE_KEY
+make up             # docker compose up --build
+```
+
+Open <http://localhost:3030>, create a project, and click the lock in the header to enter your write key. Until then the UI is read-only.
+
+No Docker? See [Local development](#local-development). Run `make` to list every target.
+
+## Connect an AI agent
+
+Open **Connect agent** in the UI. It shows a ready-made command (for Claude Code it registers the server for you) plus the JSON config for other MCP clients. Agents get read tools out of the box and write tools when `PJPLANNER_API_KEY` is set. Details in [MCP server](#mcp-server).
+
+## Architecture
+
+```
+ ┌────────────┐   REST /api    ┌────────────────────────┐
+ │  React UI  │ ─────────────▶ │  Fastify 5 + SQLite    │
+ └────────────┘                │  (also serves the UI   │
+ ┌────────────┐   REST /api    │   and the MCP bundle)  │
+ │ MCP server │ ─────────────▶ └────────────────────────┘
+ │  (stdio)   │
+ └────────────┘
+```
+
+Three independent npm packages, no workspace root: `backend/`, `frontend/`, `mcp/`.
 
 ## Run with Docker
 
@@ -8,7 +76,7 @@ Project planning tool for tracking modules, their owners, and the relations (dep
 docker compose up --build
 ```
 
-Open http://localhost:3030. Data is stored in the `pjplanner-data` volume (`/data/pjplanner.db`).
+Open http://localhost:3030. Data is stored in the `pjplanner-data` volume (`/data/pjplanner.db`). Set `PUBLIC_URL` in `.env` to your LAN address so the "Connect agent" dialog shows a URL agents can reach.
 
 ## Local development
 
