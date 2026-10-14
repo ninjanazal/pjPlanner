@@ -22,7 +22,7 @@ import { buildTimeline } from "../src/timeline.js";
 describe("buildTimeline", () => {
   it("puts the dependent owner after the dependency, using estimates", () => {
     const t = (id: number, moduleId: number, ownerId: number, estimate: number | null = null) => ({ id, title: `t${id}`, state: "open", moduleId, ownerId, estimate });
-    const tl = buildTimeline([t(1, 1, 1, 2), t(2, 2, 2)], [{ id: 1 }, { id: 2 }], [{ sourceId: 2, targetId: 1 }]);
+    const tl = buildTimeline([t(1, 1, 1, 2), t(2, 2, 2)], [{ id: 1 }, { id: 2 }], [{ sourceId: 1, targetId: 2 }]);
     expect(tl.slots.find((s) => s.issue.id === 2)).toMatchObject({ start: 2, length: 1 });
     expect(tl.length).toBe(3);
   });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { GroupsPage } from '../components/GroupsPage';
 import { autoLayout, cardHeight, cardWidth } from '../layout';
@@ -23,33 +23,45 @@ const mockFetch = (status: number, body?: unknown) => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('GroupsPage', () => {
-  it('lists group tiles with counts, shows members read-only, Edit opens the form', async () => {
+  it('lists group cards with counts that link to the group page', () => {
+    render(<GroupsPage graph={graph} onChanged={() => {}} onOpenModule={() => {}} />);
+    const card = screen.getByLabelText('Group Billing');
+    expect(card).toHaveTextContent('2 modules');
+    expect(card).toHaveTextContent('💳');
+    expect(card).toHaveAttribute('href', '#/groups/1');
+    expect(screen.getByLabelText('Group Empty')).toHaveTextContent('0 modules');
+    expect(screen.getByText(/2 modules not in any group: Auth, Gateway/)).toBeInTheDocument();
+  });
+
+  it('filters the cards by search', async () => {
+    render(<GroupsPage graph={graph} onChanged={() => {}} onOpenModule={() => {}} />);
+    await userEvent.type(screen.getByLabelText('Search groups'), 'bill');
+    expect(screen.getByLabelText('Group Billing')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Group Empty')).toBeNull();
+  });
+
+  it('the group page shows its modules and opens one', async () => {
     const open = vi.fn();
-    render(<GroupsPage graph={graph} onChanged={() => {}} onOpenModule={open} />);
-    expect(within(screen.getByLabelText('Group Billing')).getByText('2 modules')).toBeInTheDocument();
-    expect(screen.getByLabelText('Group Billing')).toHaveTextContent('💳');
-    await userEvent.click(screen.getByLabelText('Group Billing'));
-    expect(screen.queryByLabelText('Name')).toBeNull();
-    expect(screen.getByLabelText('Open module Invoices')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Open module Auth')).toBeNull();
-    await userEvent.click(screen.getByLabelText('Open module Payments'));
-    expect(open).toHaveBeenCalledWith(2);
-    await userEvent.click(screen.getByText('Edit'));
+    render(<GroupsPage graph={graph} groupRef={1} onChanged={() => {}} onOpenModule={open} />);
     expect(screen.getByLabelText('Name')).toHaveValue('Billing');
+    expect(screen.getAllByLabelText('Open module Invoices').length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText('Open module Auth')).toBeNull();
+    await userEvent.click(screen.getAllByLabelText('Open module Payments')[0]);
+    expect(open).toHaveBeenCalledWith(2);
   });
 
   it('creates a group and shows 409 inline', async () => {
     const f = mockFetch(201, { id: 9, name: 'New', color: null, icon: null });
     const changed = vi.fn();
-    render(<GroupsPage graph={graph} onChanged={changed} onOpenModule={() => {}} />);
-    await userEvent.click(screen.getByText('Add group'));
+    render(<GroupsPage graph={graph} groupRef="new" onChanged={changed} onOpenModule={() => {}} />);
     await userEvent.type(screen.getByLabelText('Name'), 'New');
     await userEvent.click(screen.getByText('Create group'));
     await waitFor(() => expect(changed).toHaveBeenCalled());
     expect(f.mock.calls[0][0]).toBe('/api/groups');
     expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ name: 'New', color: null, icon: expect.any(String), parentId: null });
     mockFetch(409, { error: { code: 'conflict', message: 'Group name already exists' } });
-    await userEvent.click(screen.getByText('Add group'));
+    cleanup();
+    render(<GroupsPage graph={graph} groupRef="new" onChanged={() => {}} onOpenModule={() => {}} />);
     await userEvent.type(screen.getByLabelText('Name'), 'billing');
     await userEvent.click(screen.getByText('Create group'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Group name already exists');
@@ -57,13 +69,21 @@ describe('GroupsPage', () => {
 
   it('delete confirmation says modules are kept ungrouped', async () => {
     const f = mockFetch(204);
-    render(<GroupsPage graph={graph} onChanged={() => {}} onOpenModule={() => {}} />);
-    await userEvent.click(screen.getByLabelText('Group Billing'));
-    await userEvent.click(screen.getByText('Edit'));
+    render(<GroupsPage graph={graph} groupRef={1} onChanged={() => {}} onOpenModule={() => {}} />);
     await userEvent.click(screen.getByText('Delete group'));
     expect(screen.getByRole('alertdialog')).toHaveTextContent(/move up one level.*become ungrouped.*no modules are deleted/);
     await userEvent.click(screen.getByText('Confirm'));
     await waitFor(() => expect(f).toHaveBeenCalledWith('/api/groups/1', expect.objectContaining({ method: 'DELETE' })));
+  });
+
+  it('adding a module saves the group, then moves the module into it', async () => {
+    const f = mockFetch(200, { id: 2, name: 'Empty', color: null, icon: null, parentId: null });
+    render(<GroupsPage graph={graph} groupRef={2} onChanged={() => {}} onOpenModule={() => {}} />);
+    await userEvent.type(screen.getByPlaceholderText('Add a module…'), 'Auth');
+    await userEvent.click(await screen.findByRole('option', { name: /Auth/ }));
+    await userEvent.click(screen.getByText('Save changes'));
+    await waitFor(() => expect(f).toHaveBeenCalledWith('/api/modules/3', expect.objectContaining({ method: 'PUT' })));
+    expect(JSON.parse(f.mock.calls.find((c) => c[0] === '/api/modules/3')![1].body)).toMatchObject({ groupId: 2 });
   });
 });
 
@@ -172,28 +192,26 @@ describe('parent group select', () => {
   ];
   const g: Graph = { owners: [], groups, modules: [mod(1, 'M', 3)], relations: [] };
 
-  it('excludes self and descendants, shows path labels, and sends parentId', async () => {
+  it('shows path labels and sub-groups, excludes self and descendants, and sends parentId', async () => {
     const f = mockFetch(200, { id: 2, name: 'B', color: null, icon: null, parentId: 4 });
-    render(<GroupsPage graph={g} onChanged={() => {}} onOpenModule={() => {}} />);
-    await userEvent.click(screen.getByLabelText('Group B'));
+    const { unmount } = render(<GroupsPage graph={g} onChanged={() => {}} onOpenModule={() => {}} />);
     expect(screen.getByLabelText('Group B')).toHaveTextContent('A / B');
-    expect(screen.getByText('Parent group: A')).toBeInTheDocument();
+    unmount();
+    render(<GroupsPage graph={g} groupRef={2} onChanged={() => {}} onOpenModule={() => {}} />);
     expect(screen.getByLabelText('Open group C')).toBeInTheDocument();
-    await userEvent.click(screen.getByText('Edit'));
     const sel = screen.getByLabelText('Parent group');
     expect(within(sel).getAllByRole('option').map((o) => o.textContent)).toEqual(['None (top level)', 'A', 'D']);
     await userEvent.selectOptions(sel, 'D');
-    await userEvent.click(screen.getByText('Save group'));
+    await userEvent.click(screen.getByText('Save changes'));
     await waitFor(() => expect(f).toHaveBeenCalled());
     expect(JSON.parse(f.mock.calls[0][1].body)).toMatchObject({ name: 'B', parentId: 4 });
   });
 
   it('shows a server validation error inline', async () => {
     mockFetch(400, { error: { code: 'validation_error', message: 'Group depth exceeds 4' } });
-    render(<GroupsPage graph={g} onChanged={() => {}} onOpenModule={() => {}} />);
-    await userEvent.click(screen.getByLabelText('Group D'));
-    await userEvent.click(screen.getByText('Edit'));
-    await userEvent.click(screen.getByText('Save group'));
+    render(<GroupsPage graph={g} groupRef={4} onChanged={() => {}} onOpenModule={() => {}} />);
+    await userEvent.selectOptions(screen.getByLabelText('Parent group'), '3');
+    await userEvent.click(screen.getByText('Save changes'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Group depth exceeds 4');
   });
 });

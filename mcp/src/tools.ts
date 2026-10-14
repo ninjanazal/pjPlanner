@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ApiError, PlannerApi } from "./api.js";
+import { dropApiItems, mergeApiItems } from "./apiItems.js";
 import { findDependencies, Relation } from "./deps.js";
 import { sprintView, SprintIssue } from "./sprint.js";
 import { buildTimeline } from "./timeline.js";
@@ -23,7 +24,25 @@ const wrap =
   };
 
 const id = z.number().int();
+const testStatus = z.enum(["none", "partial", "full"]).nullable().optional().describe("Does the module have automated tests: full, partial, none; null = not assessed");
+const testNotes = z.string().optional().describe("Test framework, where the tests live, what is not covered");
+const apiItem = z.object({
+  id: id.optional().describe("Existing item id to keep and update it; omit for a new item"),
+  kind: z.enum(["function", "endpoint", "event", "type", "other"]).optional().describe("Default other"),
+  name: z.string().describe("For endpoints start with the HTTP method, e.g. 'GET /api/users'"),
+  signature: z.string().optional(),
+  description: z.string().optional(),
+});
 const hex = z.string().nullable().optional();
+const look = {
+  textColor: hex.describe("Text colour on the card, #rrggbb; null resets to the theme default"),
+  strokeColor: hex.describe("Card border colour, #rrggbb; null resets"),
+  strokeStyle: z.enum(["solid", "dashed", "dotted"]).optional().describe("Card border style"),
+  apiItems: z
+    .array(apiItem)
+    .optional()
+    .describe("The module's public API, REPLACED as a whole: send the complete list (include ids of items to keep). Omitted = unchanged; [] clears all"),
+};
 
 export function registerTools(server: McpServer, api: PlannerApi, opts: { write: boolean }) {
   server.tool(
@@ -52,7 +71,7 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
     "list_issues",
     "List issues (epic/story/bug/task). Optional filters applied client-side.",
     {
-      state: z.enum(["open", "closed"]).optional(),
+      state: z.enum(["open", "code_review", "test_validation", "closed"]).optional(),
       moduleId: id.optional(),
       ownerId: id.optional(),
       sprintId: id.optional().describe("Only issues in this sprint"),
@@ -122,6 +141,13 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
   );
   server.tool("get_issue", "One issue by id.", { id }, wrap(({ id }) => api.request("GET", `/issues/${id}`)));
 
+  server.tool(
+    "export_project",
+    "Export a whole project (owners, groups, modules, relations, sprints, issues) as one JSON object that import_project accepts.",
+    { id },
+    wrap(({ id }) => api.request("GET", `/projects/${id}/export`)),
+  );
+
   if (!opts.write) return;
 
   server.tool(
@@ -140,6 +166,9 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
       groupId: id.nullable().optional(),
       color: hex,
       icon: hex,
+      testStatus,
+      testNotes,
+      ...look,
     },
     wrap((body) => api.request("POST", "/modules", body)),
   );
@@ -154,6 +183,9 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
       groupId: id.nullable().optional(),
       color: hex,
       icon: hex,
+      testStatus,
+      testNotes,
+      ...look,
     },
     wrap(async ({ id, ...patch }) => {
       const cur = await api.request<Record<string, unknown>>("GET", `/modules/${id}`);
@@ -162,10 +194,52 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
     }),
   );
   server.tool(
+    "add_api_items",
+    "Add public API items (endpoints, functions, events, types) to a module without resending the rest. An item with the same kind and name as an existing one updates it; everything else is kept.",
+    { moduleId: id, items: z.array(apiItem.omit({ id: true })).min(1) },
+    wrap(async ({ moduleId, items }) => {
+      const cur = await api.request<Record<string, unknown> & { apiItems: Parameters<typeof mergeApiItems>[0] }>("GET", `/modules/${moduleId}`);
+      return api.request("PUT", `/modules/${moduleId}`, { name: cur.name, description: cur.description, ownerIds: cur.ownerIds, apiItems: mergeApiItems(cur.apiItems, items) });
+    }),
+  );
+  server.tool(
+    "remove_api_items",
+    "Remove API items from a module by id and/or exact name; the other items are kept.",
+    { moduleId: id, ids: z.array(id).optional(), names: z.array(z.string()).optional() },
+    wrap(async ({ moduleId, ids, names }) => {
+      const cur = await api.request<Record<string, unknown> & { apiItems: Parameters<typeof dropApiItems>[0] }>("GET", `/modules/${moduleId}`);
+      return api.request("PUT", `/modules/${moduleId}`, { name: cur.name, description: cur.description, ownerIds: cur.ownerIds, apiItems: dropApiItems(cur.apiItems, ids ?? [], names ?? []) });
+    }),
+  );
+  server.tool(
+    "create_group",
+    "Create a group of modules. Set parentId to nest it under another group (max depth 4). Assign modules to it with create_module/update_module groupId.",
+    { name: z.string(), parentId: id.nullable().optional(), color: hex, icon: hex },
+    wrap((body) => api.request("POST", "/groups", body)),
+  );
+  server.tool(
+    "update_group",
+    "Update a group (rename, recolor, move under another parentId or null for top level); omitted fields keep their value.",
+    { id, name: z.string().optional(), parentId: id.nullable().optional(), color: hex, icon: hex },
+    wrap(async ({ id, ...patch }) => {
+      const groups = await api.request<{ id: number; name: string }[]>("GET", "/groups");
+      const cur = groups.find((g) => g.id === id);
+      if (!cur) throw new ApiError(`not_found: Group ${id} not found`);
+      const defined = Object.entries(patch).filter(([, v]) => v !== undefined);
+      return api.request("PUT", `/groups/${id}`, { name: cur.name, ...Object.fromEntries(defined) });
+    }),
+  );
+  server.tool(
     "add_relation",
     "Add a dependency: sourceId depends on targetId.",
-    { sourceId: id, targetId: id, label: z.string().optional() },
+    { sourceId: id, targetId: id, label: z.string().optional(), color: hex },
     wrap((body) => api.request("POST", "/relations", body)),
+  );
+  server.tool(
+    "update_relation",
+    "Change a relation's label and/or color (null clears the color); omitted fields keep their value. At least one is required.",
+    { id, label: z.string().optional(), color: hex },
+    wrap(({ id, ...patch }) => api.request("PUT", `/relations/${id}`, patch)),
   );
   server.tool("remove_relation", "Delete a relation by id.", { id }, wrap(async ({ id }) => {
     await api.request("DELETE", `/relations/${id}`);
@@ -173,16 +247,17 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
   }));
   server.tool(
     "create_issue",
-    "Create an issue. Hierarchy: epic has no parent; a story's or bug's parent is an epic; a task's parent is an epic, a story or a bug. Only epics, stories and bugs can have children. Only tasks take an ownerId or moduleId, and the ownerId must be one of the moduleId module's owners (so set the module first); epics, stories and bugs reject both (they touch the modules of their tasks).",
+    "Create an issue. Hierarchy: epic has no parent; a story's or bug's parent is an epic; a task's parent is an epic, a story or a bug. Only epics, stories and bugs can have children. A task must have a moduleId (exactly one module, required on create; it cannot be cleared later). Only tasks take an ownerId or moduleId, and the ownerId must be one of the moduleId module's owners (so set the module first); epics, stories and bugs reject both (they touch the modules of their tasks).",
     {
       type: z.enum(["epic", "story", "bug", "task"]),
       title: z.string(),
       description: z.string().optional(),
+      implementation: z.string().optional().describe("How-to notes for the developer picking the task up: approach, files to touch, pitfalls, links (tasks only; omitted on update = unchanged)"),
       parentId: id.nullable().optional(),
       ownerId: id.nullable().optional(),
       moduleId: id.nullable().optional(),
       sprintId: id.nullable().optional(),
-      estimate: z.number().int().min(1).max(99).nullable().optional().describe("Task effort in whole steps (tasks only; unset = 1); drives get_sprint_timeline"),
+      estimate: z.number().int().min(1).max(99).nullable().optional().describe("Task size in steps, planning-poker style: 1 super easy, 2 easy, 3 small, 5 medium, 8 hard, 10 super hard (tasks only; unset = 1); drives get_sprint_timeline"),
     },
     wrap((body) => api.request("POST", "/issues", body)),
   );
@@ -194,12 +269,13 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
       type: z.enum(["epic", "story", "bug", "task"]).optional(),
       title: z.string().optional(),
       description: z.string().optional(),
+      implementation: z.string().optional().describe("How-to notes for the developer picking the task up: approach, files to touch, pitfalls, links (tasks only; omitted on update = unchanged)"),
       parentId: id.nullable().optional(),
       ownerId: id.nullable().optional(),
       moduleId: id.nullable().optional(),
-      state: z.enum(["open", "closed"]).optional(),
+      state: z.enum(["open", "code_review", "test_validation", "closed"]).optional(),
       sprintId: id.nullable().optional().describe("Sprint to put the issue in; null = backlog; omitted = unchanged"),
-      estimate: z.number().int().min(1).max(99).nullable().optional().describe("Task effort in whole steps (tasks only; unset = 1); drives get_sprint_timeline"),
+      estimate: z.number().int().min(1).max(99).nullable().optional().describe("Task size in steps, planning-poker style: 1 super easy, 2 easy, 3 small, 5 medium, 8 hard, 10 super hard (tasks only; unset = 1); drives get_sprint_timeline"),
     },
     wrap(async ({ id, ...patch }) => {
       const c = await api.request<Record<string, unknown>>("GET", `/issues/${id}`);
@@ -244,5 +320,73 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
     "Give every unassigned open task of a sprint the best owner from its module's owners (balanced). reset=true first clears the owners of open tasks and re-deals them.",
     { id, reset: z.boolean().optional() },
     wrap(({ id, reset }) => api.request("POST", `/sprints/${id}/assign${reset ? "?reset=1" : ""}`)),
+  );
+
+  const del = (name: string, what: string, path: string, note = "") =>
+    server.tool(name, `Delete ${what} by id.${note ? " " + note : ""} Irreversible.`, { id }, wrap(async ({ id }) => {
+      await api.request("DELETE", `/${path}/${id}`);
+      return { deleted: id };
+    }));
+  del("delete_module", "a module", "modules", "Its relations and API items go with it; issues keep existing but lose the module.");
+  del("delete_group", "a group", "groups", "Child groups move up one level and its modules become ungrouped.");
+  del("delete_issue", "an issue", "issues");
+  del("delete_sprint", "a sprint", "sprints");
+  del("delete_owner", "an owner", "owners");
+  del("delete_project", "a whole project with all its modules, owners, groups, issues and sprints", "projects");
+
+  server.tool(
+    "set_module_position",
+    "Place a module on the diagram canvas (x, y in pixels).",
+    { id, x: z.number(), y: z.number() },
+    wrap(({ id, ...pos }) => api.request("PUT", `/modules/${id}/position`, pos)),
+  );
+  server.tool(
+    "set_module_positions",
+    "Place many modules on the canvas in one call (1-500).",
+    { positions: z.array(z.object({ id, x: z.number(), y: z.number() })).min(1).max(500) },
+    wrap((body) => api.request("PUT", "/modules/positions", body)),
+  );
+
+  server.tool(
+    "create_owner",
+    "Create an owner (a person or team that can own modules and tasks).",
+    { name: z.string(), color: hex, icon: hex },
+    wrap((body) => api.request("POST", "/owners", body)),
+  );
+  server.tool(
+    "update_owner",
+    "Update an owner; omitted fields keep their value.",
+    { id, name: z.string().optional(), color: hex, icon: hex },
+    wrap(async ({ id, ...patch }) => {
+      const owners = await api.request<{ id: number; name: string }[]>("GET", "/owners");
+      const cur = owners.find((o) => o.id === id);
+      if (!cur) throw new ApiError(`not_found: Owner ${id} not found`);
+      const defined = Object.entries(patch).filter(([, v]) => v !== undefined);
+      return api.request("PUT", `/owners/${id}`, { name: cur.name, ...Object.fromEntries(defined) });
+    }),
+  );
+
+  server.tool(
+    "assign_issue",
+    "Give one unfinished task in a sprint the best owner from its module's owners (balanced). Needs the sprint and module set, and the module to have owners.",
+    { id },
+    wrap(({ id }) => api.request("POST", `/issues/${id}/assign`)),
+  );
+
+  server.tool(
+    "update_project",
+    "Rename a project or change its description; omitted fields keep their value.",
+    { id, name: z.string().optional(), description: z.string().optional() },
+    wrap(async ({ id, ...patch }) => {
+      const c = await api.request<Record<string, unknown>>("GET", `/projects/${id}`);
+      const defined = Object.entries(patch).filter(([, v]) => v !== undefined);
+      return api.request("PUT", `/projects/${id}`, { name: c.name, description: c.description, ...Object.fromEntries(defined) });
+    }),
+  );
+  server.tool(
+    "import_project",
+    "Import a project from export_project JSON. Always creates a new project (name gets \" (2)\" on a clash); nothing existing is touched.",
+    { data: z.record(z.unknown()).describe("The full object returned by export_project") },
+    wrap(({ data }) => api.request("POST", "/projects/import", data)),
   );
 }

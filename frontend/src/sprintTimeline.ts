@@ -3,13 +3,13 @@ import type { Issue, Module, Relation } from './types';
 export interface Slot { issue: Issue; lane: number | null; start: number; length: number; waitsFor: number[] }
 export interface Timeline { slots: Slot[]; lanes: (number | null)[]; length: number; idealLength: number }
 
-// Every module a module depends on, directly or not (relation source -> target = source depends on target).
+// Every module a module depends on, directly or not (relation source -> target = target depends on source, the arrow points to what is built next).
 function upstream(moduleId: number, relations: Relation[]): Set<number> {
   const seen = new Set<number>();
   const queue = [moduleId];
   while (queue.length) {
     const cur = queue.shift()!;
-    for (const r of relations) if (r.sourceId === cur && r.targetId !== moduleId && !seen.has(r.targetId)) { seen.add(r.targetId); queue.push(r.targetId); }
+    for (const r of relations) if (r.targetId === cur && r.sourceId !== moduleId && !seen.has(r.sourceId)) { seen.add(r.sourceId); queue.push(r.sourceId); }
   }
   return seen;
 }
@@ -18,7 +18,7 @@ function upstream(moduleId: number, relations: Relation[]): Set<number> {
 // each owner works one task at a time, preferring the task with the longest chain of work waiting behind it,
 // so blocked people start what they can.
 export function buildTimeline(tasks: Issue[], modules: Module[], relations: Relation[]): Timeline {
-  const open = tasks.filter((t) => t.state === 'open');
+  const open = tasks.filter((t) => t.state !== 'closed');
   const len = (t: Issue) => Math.max(1, t.estimate ?? 1);
   const up = new Map(modules.map((m) => [m.id, upstream(m.id, relations)]));
   // Modules that depend on each other in a cycle cannot be ordered: ignore that dependency.

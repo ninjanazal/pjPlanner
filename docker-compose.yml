@@ -12,6 +12,8 @@ services:
       # Optional Jira integration (shared bot account); both empty = off
       JIRA_URL: ${JIRA_URL:-}
       JIRA_TOKEN: ${JIRA_TOKEN:-}
+      # Master switch for writing to Jira (also needs the per-project toggle in the UI)
+      JIRA_WRITE: ${JIRA_WRITE:-}
     volumes:
       - pjplanner-data:/data
     healthcheck:

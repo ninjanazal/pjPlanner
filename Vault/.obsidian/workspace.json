@@ -4,17 +4,19 @@
     "type": "split",
     "children": [
       {
-        "id": "28f980d58521d024",
+        "id": "f944401b9d4c7b55",
         "type": "tabs",
         "children": [
           {
-            "id": "a235b938c2b13ed8",
+            "id": "fcf2ec01cac9101c",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {},
-              "icon": "lucide-file",
-              "title": "New tab"
+              "type": "excalidraw",
+              "state": {
+                "file": "01 Architecture.md"
+              },
+              "icon": "excalidraw-icon",
+              "title": "01 Architecture"
             }
           }
         ]
@@ -79,8 +81,7 @@
       }
     ],
     "direction": "horizontal",
-    "width": 300,
-    "collapsed": true
+    "width": 300
   },
   "right": {
     "id": "92789ce204e6bad3",
@@ -183,10 +184,10 @@
       "obsidian-excalidraw-plugin:New drawing": false
     }
   },
-  "active": "a235b938c2b13ed8",
+  "active": "fcf2ec01cac9101c",
   "lastOpenFiles": [
-    "07 Tech stack.md",
     "10 Code map.md",
+    "07 Tech stack.md",
     "mcp/src/api.ts + index.ts.md",
     "mcp/skill/SKILL.md.md",
     "ops/Makefile + .env.md",

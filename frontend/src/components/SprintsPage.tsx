@@ -16,19 +16,19 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
   const [editing, setEditing] = useState<Sprint | 'new' | null>(null);
   const [timeline, setTimeline] = useState<Sprint | null>(null);
   const [over, setOver] = useState<string | null>(null);
-  const { error, run } = useAction();
+  const { error, run } = useAction(true);
   const work = issues.filter(isWork); // epics and bugs only group; tasks are the sprint work
   const active = sprints.find((s) => s.state === 'active');
   const assignable = sprints.filter((s) => s.state !== 'closed');
-  const backlog = work.filter((i) => i.sprintId == null && i.state === 'open');
+  const backlog = work.filter((i) => i.sprintId == null && i.state !== 'closed');
   // Finished work that never went into a sprint still has a home here.
   const done = work.filter((i) => i.sprintId == null && i.state === 'closed');
   const live = sprints.filter((s) => s.state !== 'closed').sort((a, b) => (a.state === 'active' ? -1 : b.state === 'active' ? 1 : a.id - b.id));
   const history = sprints.filter((s) => s.state === 'closed').sort((a, b) => b.id - a.id);
 
-  const act = async (fn: () => Promise<unknown>) => { if (await run(fn)) onChanged(); };
+  const act = async (fn: () => Promise<unknown>, done?: string) => { if (await run(fn, done)) onChanged(); };
   const setState = (s: Sprint, state: Sprint['state']) =>
-    act(() => api.updateSprint(s.id, { name: s.name, goal: s.goal, state }));
+    act(() => api.updateSprint(s.id, { name: s.name, goal: s.goal, state }), `Sprint ${state === 'active' ? 'started' : state === 'closed' ? 'closed' : 'updated'}`);
   const move = (i: Issue, sprintId: number | null) => { if (i.sprintId !== sprintId) act(() => api.updateIssue(i.id, withSprint(i, sprintId))); };
   const drop = (e: React.DragEvent, sprintId: number | null) => {
     e.preventDefault(); setOver(null);
@@ -62,7 +62,7 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
   } : {};
 
   const sprintClosed = (i: Issue) => sprints.find((x) => x.id === i.sprintId)?.state === 'closed';
-  const canAssign = (i: Issue) => i.state === 'open' && !sprintClosed(i) && owners.length > 0;
+  const canAssign = (i: Issue) => i.state !== 'closed' && !sprintClosed(i) && owners.length > 0;
   const choices = (i: Issue) => owners.filter((o) => modules.find((m) => m.id === i.moduleId)?.ownerIds.includes(o.id));
 
   // One task = one slim row: tick, title, then where it is and who has it.
@@ -107,7 +107,7 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
             {assignable.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
           </select>
         )}
-        {opts.toBacklog && i.state === 'open' && <button className="tk-x" aria-label={`Move ${i.title} to backlog`} title="Move to backlog" onClick={() => move(i, null)}>&times;</button>}
+        {opts.toBacklog && i.state !== 'closed' && <button className="tk-x" aria-label={`Move ${i.title} to backlog`} title="Move to backlog" onClick={() => move(i, null)}>&times;</button>}
       </li>
     );
   };
@@ -130,9 +130,9 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
   const workload = (items: Issue[]) => {
     const rows = owners.map((o) => {
       const mine = items.filter((i) => i.ownerId === o.id);
-      return { key: String(o.id), name: `${o.icon ? `${o.icon} ` : ''}${o.name}`, color: o.color, open: mine.filter((i) => i.state === 'open').length, done: mine.filter((i) => i.state === 'closed').length };
+      return { key: String(o.id), name: `${o.icon ? `${o.icon} ` : ''}${o.name}`, color: o.color, open: mine.filter((i) => i.state !== 'closed').length, done: mine.filter((i) => i.state === 'closed').length };
     }).filter((r) => r.open + r.done > 0);
-    const none = items.filter((i) => i.ownerId == null && i.state === 'open').length;
+    const none = items.filter((i) => i.ownerId == null && i.state !== 'closed').length;
     if (none) rows.push({ key: 'none', name: 'Unassigned', color: null, open: none, done: 0 });
     if (rows.length === 0) return null;
     const max = Math.max(...rows.map((r) => r.open + r.done));
@@ -154,7 +154,7 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
     const total = s.openCount + s.closedCount;
     const pct = total ? Math.round((s.closedCount / total) * 100) : 0;
     const closed = s.state === 'closed';
-    const unassigned = items.filter((i) => i.state === 'open' && i.ownerId == null).length;
+    const unassigned = items.filter((i) => i.state !== 'closed' && i.ownerId == null).length;
     return (
       <section key={s.id} className={`sp2 sp2-${s.state}${over === `s${s.id}` ? ' over' : ''}`} aria-label={`Sprint ${s.name}`} {...dropProps(`s${s.id}`, s.id, !closed)}>
         <header className="sp2-head">
@@ -168,8 +168,8 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
                 ? <button onClick={() => { if (window.confirm(`Close sprint "${s.name}"? Its open tasks go back to the backlog and it cannot be reopened.`)) setState(s, 'closed'); }}>Close sprint</button>
                 : <button className="primary" disabled={!!active} title={active ? 'Close the active sprint first' : undefined} onClick={() => setState(s, 'active')}>Start sprint</button>}
               {unassigned > 0 && <button onClick={() => act(() => api.autoAssignSprint(s.id))} title="Give every unassigned task the best owner from its module">✨ Auto-assign {unassigned}</button>}
-              {s.state === 'active' && items.some((i) => i.state === 'open') && <button onClick={() => { if (window.confirm('Re-deal the open tasks of this sprint? Current owners are replaced by a fresh balanced split.')) act(() => api.autoAssignSprint(s.id, true)); }} title="Clear the owners of open tasks and balance them again">↻ Re-assign</button>}
-              {items.some((i) => i.state === 'open') && <button onClick={() => setTimeline(s)} title="Optimal order of work given module dependencies">Timeline</button>}
+              {s.state === 'active' && items.some((i) => i.state !== 'closed') && <button onClick={() => { if (window.confirm('Re-deal the open tasks of this sprint? Current owners are replaced by a fresh balanced split.')) act(() => api.autoAssignSprint(s.id, true)); }} title="Clear the owners of open tasks and balance them again">↻ Re-assign</button>}
+              {items.some((i) => i.state !== 'closed') && <button onClick={() => setTimeline(s)} title="Optimal order of work given module dependencies">Timeline</button>}
               <button onClick={() => setEditing(s)}>Edit</button>
             </div>
           )}

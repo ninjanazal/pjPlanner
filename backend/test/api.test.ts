@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
+import { timing } from '../src/routes/issues.js';
 
 let app: ReturnType<typeof buildApp>;
 // A fresh database has no project; the suite works inside one called "Test" (the oldest, so no header is needed).
@@ -12,7 +13,18 @@ beforeEach(async () => {
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Test' } });
 });
 
+// Every task needs a module: a task created without a `moduleId` key gets a shared default one (pass `moduleId: null` to test the rule itself).
+let defaultModule: number | null = null;
+beforeEach(() => { defaultModule = null; });
 const call = async (method: any, url: string, payload?: any) => {
+  if (method === 'POST' && url === '/api/issues' && payload?.type === 'task' && !('moduleId' in payload)) {
+    if (defaultModule == null) defaultModule = (await app.inject({ method: 'POST', url: '/api/modules', payload: { name: 'Default module' } })).json().id;
+    payload = { ...payload, moduleId: defaultModule };
+  }
+  if (method === 'PUT' && /^\/api\/issues\/\d+$/.test(url) && payload?.type === 'task' && !('moduleId' in payload)) {
+    const cur = (await app.inject({ method: 'GET', url })).json();
+    payload = { ...payload, moduleId: cur.moduleId };
+  }
   const r = await app.inject({ method, url, payload });
   return { status: r.statusCode, body: r.body ? JSON.parse(r.body) : null };
 };
@@ -37,16 +49,23 @@ describe('api', () => {
     delete process.env.MCP_BUNDLE;
   });
 
-  it('serves the mapping skill, 404 when missing', async () => {
-    const f = path.join(os.tmpdir(), `skill-${process.pid}.md`);
-    fs.writeFileSync(f, '# skill');
-    process.env.MCP_SKILL = f;
-    const r = await app.inject({ method: 'GET', url: '/api/mcp/skill' });
-    expect(r.statusCode).toBe(200);
-    expect(r.body).toBe('# skill');
-    fs.rmSync(f);
+  it('serves the skill suite: list, each skill, legacy mapping route, 404 when missing', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'skills-'));
+    for (const n of ['pjplanner-map', 'pjplanner-breakdown']) {
+      fs.mkdirSync(path.join(dir, n));
+      fs.writeFileSync(path.join(dir, n, 'SKILL.md'), `---\nname: ${n}\ndescription: does ${n}\n---\n# ${n}`);
+    }
+    fs.mkdirSync(path.join(dir, 'empty'));
+    process.env.MCP_SKILLS = dir;
+    const list = await call('GET', '/api/mcp/skills');
+    expect(list.body).toEqual([{ name: 'pjplanner-breakdown', description: 'does pjplanner-breakdown' }, { name: 'pjplanner-map', description: 'does pjplanner-map' }]);
+    expect((await app.inject({ method: 'GET', url: '/api/mcp/skills/pjplanner-breakdown' })).body).toContain('# pjplanner-breakdown');
+    expect((await app.inject({ method: 'GET', url: '/api/mcp/skill' })).body).toContain('# pjplanner-map');
+    expect((await call('GET', '/api/mcp/skills/..%2Fx')).status).toBe(404);
+    expect((await call('GET', '/api/mcp/skills/empty')).status).toBe(404);
+    fs.rmSync(dir, { recursive: true });
     expect((await call('GET', '/api/mcp/skill')).status).toBe(404);
-    delete process.env.MCP_SKILL;
+    delete process.env.MCP_SKILLS;
   });
 
   it('with a write key set, every write needs it (UI and agents); reads stay open; unlock checks it', async () => {
@@ -65,6 +84,64 @@ describe('api', () => {
     delete process.env.WRITE_KEY;
     expect((await call('GET', '/api/access')).body).toEqual({ locked: false });
     expect(await send('POST', '/api/modules', {}, { name: 'c' })).toBe(201); // no key configured: open
+  });
+
+  it('keeps a task that predates the module rule editable', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pj-'));
+    const file = path.join(dir, 'legacy.db');
+    const a = buildApp(file);
+    await a.inject({ method: 'POST', url: '/api/projects', payload: { name: 'P' } });
+    const m = (await a.inject({ method: 'POST', url: '/api/modules', payload: { name: 'M' } })).json().id;
+    await a.inject({ method: 'POST', url: '/api/issues', payload: { type: 'task', title: 'old', moduleId: m } });
+    await a.close();
+    const raw = new Database(file); raw.prepare('UPDATE issues SET module_id = NULL').run(); raw.close();
+    const b = buildApp(file);
+    const r = await b.inject({ method: 'PUT', url: '/api/issues/1', payload: { type: 'task', title: 'renamed', state: 'closed' } });
+    expect(r.statusCode).toBe(200);
+    expect(r.json().moduleId).toBeNull();
+    await b.close();
+  });
+
+  it('records when a task started, was closed (and by whom) and reopened', async () => {
+    const o = await owner('O');
+    const m = await mod('M', { ownerIds: [o.id] });
+    const t = (await call('POST', '/api/issues', { type: 'task', title: 'T', moduleId: m.id, ownerId: o.id })).body;
+    expect(t).toMatchObject({ startedAt: null, closedAt: null, reopenCount: 0 });
+    const put = (state: string) => call('PUT', `/api/issues/${t.id}`, { type: 'task', title: 'T', moduleId: m.id, ownerId: o.id, state });
+    const review = (await put('code_review')).body;
+    expect(review.startedAt).toMatch(/Z$/);
+    expect(review.closedAt).toBeNull();
+    const closed = (await put('closed')).body;
+    expect(closed).toMatchObject({ startedAt: review.startedAt, closedOwnerId: o.id });
+    expect(closed.closedAt).toMatch(/Z$/);
+    const reopened = (await put('open')).body;
+    expect(reopened).toMatchObject({ closedAt: null, closedOwnerId: null, reopenCount: 1, startedAt: review.startedAt });
+    expect((await put('closed')).body.closedAt).toMatch(/Z$/);
+    // created already closed
+    const done = (await call('POST', '/api/issues', { type: 'task', title: 'D', moduleId: m.id, state: 'closed' })).body;
+    expect(done.closedAt).toMatch(/Z$/);
+    expect(done.startedAt).toBeNull();
+  });
+
+  it('timing() only counts a real transition', () => {
+    expect(timing({ state: 'open', started_at: null, closed_at: null, reopen_count: 0 }, 'open', null, 'T')).toMatchObject({ started: null, closedAt: null, reopens: 0 });
+    expect(timing({ state: 'closed', closed_at: 'X', closed_owner_id: 1, reopen_count: 2 }, 'closed', 5, 'T')).toMatchObject({ closedAt: 'X', closedOwner: 1, reopens: 2 });
+  });
+
+  it('keeps implementation notes on tasks only, and keeps them when omitted on update', async () => {
+    const t = (await call('POST', '/api/issues', { type: 'task', title: 'T', implementation: 'use the cache' })).body;
+    expect(t.implementation).toBe('use the cache');
+    const kept = (await call('PUT', `/api/issues/${t.id}`, { type: 'task', title: 'T2' })).body;
+    expect(kept.implementation).toBe('use the cache');
+    expect((await call('PUT', `/api/issues/${t.id}`, { type: 'task', title: 'T2', implementation: '' })).body.implementation).toBe('');
+    expect((await call('POST', '/api/issues', { type: 'story', title: 'S', implementation: 'x' })).status).toBe(400);
+    expect((await call('POST', '/api/issues', { type: 'story', title: 'S' })).body.implementation).toBe('');
+    expect((await call('POST', '/api/issues', { type: 'task', title: 'T', implementation: 5 })).status).toBe(400);
+  });
+
+  it('reports the address the caller reached the server at', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/mcp/info', headers: { host: '192.168.1.9:3000' } });
+    expect(res.json()).toEqual({ url: 'http://192.168.1.9:3000' });
   });
 
   it('reports the address agents should use', async () => {
@@ -417,7 +494,7 @@ describe('module visuals and api items', () => {
     for (let round = 0; round < 2; round++) {
       const a = buildApp(file);
       const g = (await a.inject({ method: 'GET', url: '/api/graph' })).json();
-      expect(g.modules[0]).toEqual({ id: 1, name: 'A', description: 'da', ownerIds: [1], color: null, icon: null, textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null, apiItems: [] });
+      expect(g.modules[0]).toEqual({ id: 1, name: 'A', description: 'da', ownerIds: [1], color: null, icon: null, textColor: null, strokeColor: null, strokeStyle: 'solid', testStatus: null, testNotes: '', x: null, y: null, groupId: null, apiItems: [] });
       expect(g.modules).toHaveLength(2);
       expect(g.relations).toHaveLength(1);
       if (round === 0) {
@@ -721,9 +798,10 @@ describe('issues', () => {
     expect((await issue('bug', 'B', { moduleId: m.id })).status).toBe(400);
     const r = await issue('task', '  E  ', { ownerId: o.id, moduleId: m.id });
     expect(r.status).toBe(201);
-    expect(r.body).toEqual({ id: 1, type: 'task', title: 'E', description: '', parentId: null, ownerId: o.id, moduleId: m.id, sprintId: null, estimate: null, state: 'open', childIds: [], rollupModuleIds: [m.id] });
+    expect(r.body).toEqual({ id: 1, type: 'task', title: 'E', description: '', implementation: '', parentId: null, ownerId: o.id, moduleId: m.id, sprintId: null, estimate: null, state: 'open', jiraKey: null, childIds: [], rollupModuleIds: [m.id], createdAt: expect.stringMatching(/Z$/), startedAt: null, closedAt: null, closedOwnerId: null, reopenCount: 0, updatedAt: expect.stringMatching(/Z$/) });
     const put = await call('PUT', '/api/issues/1', { type: 'task', title: 'E2', state: 'closed' });
-    expect(put.body).toMatchObject({ title: 'E2', state: 'closed', ownerId: null, moduleId: null });
+    expect(put.body).toMatchObject({ title: 'E2', state: 'closed', ownerId: null, moduleId: m.id });
+    expect((await call('PUT', '/api/issues/1', { type: 'task', title: 'E2', moduleId: null })).status).toBe(400); // a module cannot be taken away
     expect((await call('GET', '/api/issues')).body).toHaveLength(1);
     expect((await call('GET', '/api/issues/1')).status).toBe(200);
     expect((await call('DELETE', '/api/issues/1')).status).toBe(204);
@@ -741,7 +819,11 @@ describe('issues', () => {
     expect((await issue('task', 'x', { moduleId: 99 })).status).toBe(404);
     expect((await issue('task', 'x', { ownerId: 99 })).status).toBe(404);
     expect((await issue('task', 'x', { parentId: 99 })).status).toBe(404);
-    expect((await issue('task', 'x')).body.moduleId).toBeNull();
+    // every task needs a module, whether the key is missing or null
+    const bare = await app.inject({ method: 'POST', url: '/api/issues', payload: { type: 'task', title: 'x' } });
+    expect(bare.statusCode).toBe(400);
+    expect(bare.json().error.message).toBe('a task needs a module (moduleId)');
+    expect((await call('POST', '/api/issues', { type: 'task', title: 'x', moduleId: null })).status).toBe(400);
   });
 
   it('enforces hierarchy rules on create', async () => {
@@ -793,7 +875,7 @@ describe('issues', () => {
     // roll-up through a story: the epic sees the modules of tasks under its story
     const t = await issue('task', 'T2', { parentId: st.body.id, moduleId: m.id });
     expect(t.status).toBe(201);
-    expect((await call('GET', `/api/issues/${e.id}`)).body.rollupModuleIds).toEqual([m.id]);
+    expect((await call('GET', `/api/issues/${e.id}`)).body.rollupModuleIds).toContain(m.id);
     // a story that holds tasks cannot become a task (tasks hold nothing)
     expect((await call('PUT', `/api/issues/${st.body.id}`, { type: 'task', title: 'S', parentId: e.id })).status).toBe(400);
   });
@@ -1071,5 +1153,101 @@ describe('projects', () => {
       await a.close();
     }
     fs.rmSync(f);
+  });
+});
+
+describe('issue workflow states', () => {
+  const task = async (title: string, extra: any = {}) => (await call('POST', '/api/issues', { type: 'task', title, ...extra })).body;
+
+  it('accepts open, code_review, test_validation and closed, nothing else', async () => {
+    for (const state of ['open', 'code_review', 'test_validation', 'closed']) {
+      expect((await task(`t-${state}`, { state })).state).toBe(state);
+    }
+    const r = await call('POST', '/api/issues', { type: 'task', title: 'x', state: 'doing' });
+    expect(r.status).toBe(400);
+    expect(r.body.error.message).toContain('code_review');
+  });
+
+  it('counts review and validation as unfinished in a sprint, and closing the sprint returns them to the backlog', async () => {
+    const s = (await call('POST', '/api/sprints', { name: 'S' })).body;
+    const a = await task('a', { sprintId: s.id, state: 'code_review' });
+    const b = await task('b', { sprintId: s.id, state: 'test_validation' });
+    const c = await task('c', { sprintId: s.id, state: 'closed' });
+    const got = (await call('GET', `/api/sprints/${s.id}`)).body;
+    expect(got).toMatchObject({ openCount: 2, closedCount: 1 });
+    await call('PUT', `/api/sprints/${s.id}`, { name: 'S', state: 'active' });
+    await call('PUT', `/api/sprints/${s.id}`, { name: 'S', state: 'closed' });
+    expect((await call('GET', `/api/issues/${a.id}`)).body).toMatchObject({ sprintId: null, state: 'code_review' });
+    expect((await call('GET', `/api/issues/${b.id}`)).body).toMatchObject({ sprintId: null, state: 'test_validation' });
+    expect((await call('GET', `/api/issues/${c.id}`)).body.sprintId).toBe(s.id); // done work stays as the sprint's history
+  });
+
+  it('a re-deal keeps the owner of a task already in review', async () => {
+    const o = await owner('Ann');
+    const m = await mod('M', { ownerIds: [o.id] });
+    const s = (await call('POST', '/api/sprints', { name: 'S' })).body;
+    const inReview = await task('r', { sprintId: s.id, moduleId: m.id, ownerId: o.id, state: 'code_review' });
+    const plain = await task('p', { sprintId: s.id, moduleId: m.id, ownerId: o.id });
+    await call('POST', `/api/sprints/${s.id}/assign?reset=1`);
+    expect((await call('GET', `/api/issues/${inReview.id}`)).body.ownerId).toBe(o.id);
+    expect((await call('GET', `/api/issues/${plain.id}`)).body.ownerId).toBe(o.id); // dealt afresh, the only owner again
+  });
+
+  it('only a closed task cannot be auto-assigned', async () => {
+    const o = await owner('Ann');
+    const m = await mod('M', { ownerIds: [o.id] });
+    const s = (await call('POST', '/api/sprints', { name: 'S' })).body;
+    const t = await task('t', { sprintId: s.id, moduleId: m.id, state: 'test_validation' });
+    expect((await call('POST', `/api/issues/${t.id}/assign`)).status).toBe(200);
+    const d = await task('d', { sprintId: s.id, moduleId: m.id, state: 'closed' });
+    expect((await call('POST', `/api/issues/${d.id}/assign`)).status).toBe(400);
+  });
+
+  it('upgrades a database that only knows open and closed, keeping every row, idempotently', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pj-'));
+    const file = path.join(dir, 'two-states.db');
+    const first = buildApp(file);
+    await first.inject({ method: 'POST', url: '/api/projects', payload: { name: 'P' } });
+    const modId = (await first.inject({ method: 'POST', url: '/api/modules', payload: { name: 'M' } })).json().id;
+    await first.inject({ method: 'POST', url: '/api/issues', payload: { type: 'epic', title: 'E' } });
+    await first.inject({ method: 'POST', url: '/api/issues', payload: { type: 'task', title: 'T', state: 'closed', parentId: 1, moduleId: modId } });
+    await first.close();
+    // Put the table back the way an older version made it: the two-state CHECK.
+    const raw = new Database(file);
+    raw.pragma('foreign_keys = OFF');
+    const sql = (raw.prepare("SELECT sql FROM sqlite_master WHERE name = 'issues'").get() as { sql: string }).sql;
+    raw.exec(`DROP INDEX IF EXISTS issues_jira_key; ALTER TABLE issues RENAME TO issues_old;
+      ${sql.replace("'open','code_review','test_validation','closed'", "'open','closed'")};
+      INSERT INTO issues SELECT * FROM issues_old; DROP TABLE issues_old;`);
+    raw.close();
+    for (let i = 0; i < 2; i++) {
+      const a = buildApp(file);
+      const list = (await a.inject({ method: 'GET', url: '/api/issues' })).json();
+      expect(list.map((x: any) => [x.id, x.state, x.parentId])).toEqual([[1, 'open', null], [2, 'closed', 1]]);
+      const r = await a.inject({ method: 'POST', url: '/api/issues', payload: { type: 'task', title: 'R', state: 'code_review', moduleId: 1 } });
+      expect(r.statusCode).toBe(201);
+      await a.close();
+      const chk = new Database(file);
+      chk.prepare('DELETE FROM issues WHERE id = 3').run();
+      expect((chk.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'issues_jira_key'").get() as any)?.name).toBe('issues_jira_key');
+      chk.close();
+    }
+  });
+});
+
+describe('module test coverage', () => {
+  it('stores testStatus/testNotes, leaves them on omitted PUT, clears with null, rejects bad values', async () => {
+    const app = buildApp(':memory:');
+    await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'P' } });
+    const c = await app.inject({ method: 'POST', url: '/api/modules', payload: { name: 'A', testStatus: 'partial', testNotes: 'vitest in test/' } });
+    expect(c.statusCode).toBe(201);
+    const m = c.json();
+    expect(m).toMatchObject({ testStatus: 'partial', testNotes: 'vitest in test/' });
+    const kept = await app.inject({ method: 'PUT', url: `/api/modules/${m.id}`, payload: { name: 'A2' } });
+    expect(kept.json()).toMatchObject({ name: 'A2', testStatus: 'partial', testNotes: 'vitest in test/' });
+    const cleared = await app.inject({ method: 'PUT', url: `/api/modules/${m.id}`, payload: { name: 'A2', testStatus: null } });
+    expect(cleared.json().testStatus).toBeNull();
+    const bad = await app.inject({ method: 'PUT', url: `/api/modules/${m.id}`, payload: { name: 'A2', testStatus: 'lots' } });
+    expect(bad.statusCode).toBe(400);
   });
 });

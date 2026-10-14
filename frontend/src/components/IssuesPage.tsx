@@ -1,22 +1,33 @@
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { api } from '../api';
-import { ISSUE_STATES, ISSUE_TYPES, TYPE_ICON, type Issue, type IssueState, type IssueType, type Module, type Owner, type Sprint } from '../types';
+import { ISSUE_STATES, ISSUE_TYPES, STATE_LABEL, TYPE_ICON, type Issue, type IssueState, type IssueType, type Module, type Owner, type Project, type Sprint } from '../types';
 import { buildTree, childTypes, hideClosed, parentOptions, type IssueNode } from '../issueTree';
 import { QuickClose } from './QuickClose';
+import { JiraLogo } from './JiraLogo';
 import { BreakdownDialog } from './BreakdownDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
 import { useAction } from './useAction';
+import { EstimatePicker } from './EstimatePicker';
+import { ModulePicker } from './ModulePicker';
+import { IssuePage } from './IssuePage';
+import { issueHash } from '../route';
 
-interface Props { issues: Issue[]; sprints?: Sprint[]; modules: Module[]; owners: Owner[]; onChanged: () => void }
+interface Props { issues: Issue[]; sprints?: Sprint[]; modules: Module[]; owners: Owner[]; issueId?: number | null; onChanged: () => void; project?: Project | null }
 
 
-export function IssuesPage({ issues, sprints = [], modules, owners, onChanged }: Props) {
+const openIssue = (i: Issue) => { window.location.hash = issueHash(i.id); };
+
+export function IssuesPage({ issues, sprints = [], modules, owners, issueId = null, onChanged, project = null }: Props) {
   const [hide, setHide] = useState(true);
   const [editing, setEditing] = useState<Issue | 'new' | null>(null);
   const all = buildTree(issues);
   const tree = hide ? hideClosed(all) : all;
   const closedList = issues.filter((i) => i.state === 'closed').sort((a, b) => b.id - a.id);
+
+  if (issueId != null) {
+    return <IssuePage key={issueId} issue={issues.find((i) => i.id === issueId) ?? null} issues={issues} sprints={sprints} modules={modules} owners={owners} onChanged={onChanged} project={project} />;
+  }
 
   return (
     <div className="issues-page">
@@ -29,7 +40,7 @@ export function IssuesPage({ issues, sprints = [], modules, owners, onChanged }:
       </div>
       {tree.length === 0 && <p className="hint">{issues.length === 0 ? 'No issues yet. Add one to start tracking work.' : 'All issues are closed.'}</p>}
       <ul className="issue-tree" role="tree">
-        {tree.map((n) => <IssueRow key={n.issue.id} node={n} depth={0} modules={modules} owners={owners} onEdit={setEditing} onChanged={onChanged} />)}
+        {tree.map((n) => <IssueRow key={n.issue.id} node={n} depth={0} modules={modules} owners={owners} onChanged={onChanged} />)}
       </ul>
       {hide && closedList.length > 0 && (
         <details className="closed-list">
@@ -39,7 +50,8 @@ export function IssuesPage({ issues, sprints = [], modules, owners, onChanged }:
               <li key={i.id}><div className="issue-row is-closed">
                 <QuickClose issue={i} onChanged={onChanged} />
                 <TypeBadge type={i.type} /><span className="hint">#{i.id}</span>
-                <button className="issue-title" aria-label={`Edit issue ${i.title}`} onClick={() => setEditing(i)}>{i.title}</button>
+                <button className="issue-title" aria-label={`Open issue ${i.title}`} onClick={() => openIssue(i)}>{i.title}</button>
+                <JiraKey issue={i} />
               </div></li>
             ))}
           </ul>
@@ -53,12 +65,23 @@ export function IssuesPage({ issues, sprints = [], modules, owners, onChanged }:
   );
 }
 
+// Base address of Jira (null when it is not configured), so an imported issue's key can link to it.
+export const JiraUrlContext = createContext<string | null>(null);
+// Imported issues carry the platform's icon and key; the key links to the issue in Jira when the address is known.
+export const JiraKey = ({ issue }: { issue: Issue }) => {
+  const url = useContext(JiraUrlContext);
+  if (!issue.jiraKey) return null;
+  return url
+    ? <a className="mcp-tag jira-key" href={`${url}/browse/${issue.jiraKey}`} target="_blank" rel="noreferrer" title="Open in Jira"><JiraLogo />{issue.jiraKey}</a>
+    : <span className="mcp-tag jira-key" title="Imported from Jira"><JiraLogo />{issue.jiraKey}</span>;
+};
+
 export const TypeBadge = ({ type }: { type: IssueType }) =>
   <span className={`type-badge t-${type}`}><span aria-hidden="true">{TYPE_ICON[type]}</span> {type}</span>;
-export const StateBadge = ({ state }: { state: IssueState }) => <span className={`state-badge s-${state}`}>{state}</span>;
+export const StateBadge = ({ state }: { state: IssueState }) => <span className={`state-badge s-${state}`}>{STATE_LABEL[state]}</span>;
 
-function IssueRow({ node, depth, modules, owners, onEdit, onChanged }: {
-  node: IssueNode; depth: number; modules: Module[]; owners: Owner[]; onEdit: (i: Issue) => void; onChanged: () => void;
+function IssueRow({ node, depth, modules, owners, onChanged }: {
+  node: IssueNode; depth: number; modules: Module[]; owners: Owner[]; onChanged: () => void;
 }) {
   const i = node.issue;
   const owner = owners.find((o) => o.id === i.ownerId);
@@ -69,13 +92,14 @@ function IssueRow({ node, depth, modules, owners, onEdit, onChanged }: {
         <QuickClose issue={i} onChanged={onChanged} />
         <TypeBadge type={i.type} />
         <span className="hint">#{i.id}</span>
-        <button className="issue-title" aria-label={`Edit issue ${i.title}`} onClick={() => onEdit(i)}>{i.title}</button>
+        <button className="issue-title" aria-label={`Open issue ${i.title}`} onClick={() => openIssue(i)}>{i.title}</button>
         <StateBadge state={i.state} />
+        <JiraKey issue={i} />
         {owner && <span className="chip" style={{ '--chip-c': owner.color ?? 'var(--border)' } as React.CSSProperties}>{owner.icon} {owner.name}</span>}
         {mod && <span className="chip" data-testid="module-chip" style={{ '--chip-c': mod.color ?? 'var(--border)' } as React.CSSProperties}>{mod.icon} {mod.name}</span>}
       </div>
       {node.children.length > 0 && (
-        <ul role="group">{node.children.map((c) => <IssueRow key={c.issue.id} node={c} depth={depth + 1} modules={modules} owners={owners} onEdit={onEdit} onChanged={onChanged} />)}</ul>
+        <ul role="group">{node.children.map((c) => <IssueRow key={c.issue.id} node={c} depth={depth + 1} modules={modules} owners={owners} onChanged={onChanged} />)}</ul>
       )}
     </li>
   );
@@ -85,7 +109,7 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
   issue: Issue | null; issues: Issue[]; sprints?: Sprint[]; modules: Module[]; owners: Owner[]; onClose: () => void; onChanged: () => void;
 }) {
   const init = {
-    type: issue?.type ?? 'task' as IssueType, title: issue?.title ?? '', description: issue?.description ?? '',
+    type: issue?.type ?? 'task' as IssueType, title: issue?.title ?? '', description: issue?.description ?? '', implementation: issue?.implementation ?? '',
     parentId: issue?.parentId ?? null, ownerId: issue?.ownerId ?? null, state: issue?.state ?? 'open' as IssueState, moduleId: issue?.moduleId ?? null,
     sprintId: issue?.sprintId ?? null, estimate: issue?.estimate ?? null,
   };
@@ -101,9 +125,11 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
   const parentId = options.some((o) => o.id === f.parentId) ? f.parentId : null;
   const num = (v: string) => (v ? Number(v) : null);
 
+  const needsModule = f.type === 'task' && f.moduleId == null;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const body = { ...f, parentId, ...(f.type === 'task' ? {} : { ownerId: null, moduleId: null, sprintId: null, estimate: undefined }) };
+    if (needsModule) return;
+    const body = { ...f, parentId, ...(f.type === 'task' ? {} : { implementation: '', ownerId: null, moduleId: null, sprintId: null, estimate: undefined }) };
     if (await run(() => (issue ? api.updateIssue(issue.id, body) : api.createIssue(body)))) onChanged();
   };
   const del = async () => {
@@ -121,6 +147,7 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
         </label>
         <label>Title<input data-autofocus aria-label="Title" value={f.title} onChange={(e) => set('title', e.target.value)} /></label>
         <label>Description<textarea aria-label="Description" rows={3} value={f.description} onChange={(e) => set('description', e.target.value)} /></label>
+        {f.type === 'task' && <label>Implementation notes<textarea aria-label="Implementation notes" rows={3} placeholder="Approach, pitfalls, how to test, links…" value={f.implementation} onChange={(e) => set('implementation', e.target.value)} /></label>}
         {f.type !== 'epic' && (
           <label>Parent
             <select aria-label="Parent" value={parentId ?? ''} onChange={(e) => set('parentId', num(e.target.value))}>
@@ -129,19 +156,15 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
             </select>
           </label>
         )}
-        {f.type === 'task' && <label>Module
-          <select aria-label="Module" value={f.moduleId ?? ''} onChange={(e) => {
-            const moduleId = num(e.target.value);
+        {f.type === 'task' && <label>Module (required)
+          <ModulePicker modules={modules} value={f.moduleId} required onChange={(moduleId) => {
             const keeps = modules.find((m) => m.id === moduleId)?.ownerIds.includes(f.ownerId ?? -1);
             setF((s) => ({ ...s, moduleId, ownerId: keeps ? s.ownerId : null }));
-          }}>
-            <option value="">No module</option>
-            {modules.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
+          }} />
         </label>}
-        {f.type === 'task' && <label>Estimate (steps)
-          <input type="number" min={1} max={99} aria-label="Estimate" placeholder="1" value={f.estimate ?? ''} onChange={(e) => set('estimate', e.target.value ? Number(e.target.value) : null)} />
-        </label>}
+        {f.type === 'task' && <div className="field"><span className="field-label">Estimate (steps)</span>
+          <EstimatePicker value={f.estimate} onChange={(v) => set('estimate', v)} />
+        </div>}
         {f.type === 'task' && <label>Sprint
           <select aria-label="Sprint" value={f.sprintId ?? ''} onChange={(e) => set('sprintId', num(e.target.value))}>
             <option value="">Backlog (no sprint)</option>
@@ -149,19 +172,19 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
           </select>
         </label>}
         {f.type === 'task' && issue && <label>Assignee
-          <select aria-label="Assignee" value={f.ownerId ?? ''} disabled={moduleOwners.length === 0} onChange={(e) => set('ownerId', num(e.target.value))}>
-            <option value="">{f.moduleId == null ? 'Pick a module first' : moduleOwners.length === 0 ? 'This module has no owners' : 'Unassigned'}</option>
+          <select aria-label="Assignee" value={f.ownerId ?? ''} disabled={moduleOwners.length === 0 && f.ownerId == null} onChange={(e) => set('ownerId', num(e.target.value))}>
+            <option value="">{f.ownerId != null ? 'Unassigned' : f.moduleId == null ? 'Pick a module first' : moduleOwners.length === 0 ? 'This module has no owners' : 'Unassigned'}</option>
             {moduleOwners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
         </label>}
         <label>State
           <select aria-label="State" value={f.state} onChange={(e) => set('state', e.target.value as IssueState)}>
-            {ISSUE_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+            {ISSUE_STATES.map((s) => <option key={s} value={s}>{STATE_LABEL[s]}</option>)}
           </select>
         </label>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="row modal-actions">
-          <button type="submit" className="primary">{issue ? 'Save issue' : 'Create issue'}</button>
+          <button type="submit" className="primary" disabled={needsModule} title={needsModule ? 'Pick a module first' : undefined}>{issue ? 'Save issue' : 'Create issue'}</button>
           {issue && childTypes(issue.type).length > 0 && <button type="button" onClick={() => setBreaking(true)}>Break down…</button>}
           {issue && <button type="button" className="danger" onClick={() => setConfirming(true)}>Delete issue</button>}
           <button type="button" onClick={onClose}>Cancel</button>

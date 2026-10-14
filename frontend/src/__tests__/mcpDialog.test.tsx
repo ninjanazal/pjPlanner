@@ -9,4 +9,10 @@ describe('McpDialog', () => {
     expect(screen.getByText(/mkdir -p .*PJPLANNER_URL=http/)).toBeInTheDocument();
     expect(screen.getAllByText(/~\/\.pjplanner/).length).toBeGreaterThan(0);
   });
+
+  it('offers the whole skill suite in one command', () => {
+    render(<McpDialog onClose={() => {}} />);
+    expect(screen.getByText(/for s in pjplanner-map pjplanner-breakdown.*api\/mcp\/skills\/\$s/)).toBeInTheDocument();
+    expect(screen.getByText('/pjplanner-breakdown')).toBeInTheDocument();
+  });
 });

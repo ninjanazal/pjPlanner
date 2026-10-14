@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ApiError, PlannerApi } from "../src/api.js";
 import { findDependencies } from "../src/deps.js";
+import { dropApiItems, mergeApiItems } from "../src/apiItems.js";
 
 const rel = (id: number, sourceId: number, targetId: number) => ({ id, sourceId, targetId });
 
@@ -43,5 +44,18 @@ describe("PlannerApi", () => {
   });
   it("handles 204", async () => {
     expect(await mk(new Response(null, { status: 204 })).request("DELETE", "/relations/1")).toBeUndefined();
+  });
+});
+
+describe("api items", () => {
+  const cur = [{ id: 1, kind: "endpoint", name: "GET /a" }, { id: 2, kind: "function", name: "run" }];
+  it("adds new items and updates same kind+name in place", () => {
+    const out = mergeApiItems(cur, [{ kind: "endpoint", name: "get /a", description: "d" }, { kind: "event", name: "done" }]);
+    expect(out).toHaveLength(3);
+    expect(out[0]).toMatchObject({ id: 1, description: "d" });
+    expect(out[2].name).toBe("done");
+  });
+  it("removes by id or name", () => {
+    expect(dropApiItems(cur, [1], ["RUN"])).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import type { ApiItemInput, ApiKind, Graph, Issue, Module, StrokeStyle } from '../types';
+import type { ApiItemInput, ApiKind, Graph, Issue, Module, StrokeStyle, TestStatus } from '../types';
 import { API_KINDS, STROKE_STYLES } from '../types';
 import type { Theme } from '../theme';
 import { randomIcon } from '../randomIcon';
@@ -152,6 +152,8 @@ function ModuleForm({ graph, module, theme, startAdding, onDirty, onSaved, onDel
   const [strokeColor, setStrokeColor] = useState<string | null>(module?.strokeColor ?? null);
   const [strokeStyle, setStrokeStyle] = useState<StrokeStyle>(module?.strokeStyle ?? 'solid');
   const [groupId, setGroupId] = useState<number | null>(module?.groupId ?? null);
+  const [testStatus, setTestStatus] = useState<TestStatus | null>(module?.testStatus ?? null);
+  const [testNotes, setTestNotes] = useState(module?.testNotes ?? '');
   const [icon, setIcon] = useState<string | null>(module?.icon ?? (module ? null : randomIcon()));
   // key is a stable React key; id is absent for items not yet saved.
   const [items, setItems] = useState<(ApiItemInput & { key: number })[]>(() => [
@@ -213,7 +215,7 @@ function ModuleForm({ graph, module, theme, startAdding, onDirty, onSaved, onDel
     : 0;
 
   const body = {
-    name, description, ownerIds, color, icon, textColor, strokeColor, strokeStyle, groupId,
+    name, description, ownerIds, color, icon, textColor, strokeColor, strokeStyle, groupId, testStatus, testNotes,
     apiItems: items.map(({ key: _k, ...r }) => r),
   };
   const snapshot = JSON.stringify(body);
@@ -233,6 +235,18 @@ function ModuleForm({ graph, module, theme, startAdding, onDirty, onSaved, onDel
             {(graph.groups ?? []).map((g) => <option key={g.id} value={g.id}>{g.icon ? `${g.icon} ${groupLabel(graph.groups ?? [], g.id)}` : groupLabel(graph.groups ?? [], g.id)}</option>)}
           </select>
         </label>
+        <fieldset>
+          <legend>Tests</legend>
+          <label className="check">Coverage
+            <select aria-label="Test coverage" value={testStatus ?? ''} onChange={(e) => setTestStatus((e.target.value || null) as TestStatus | null)}>
+              <option value="">Not assessed</option>
+              <option value="full">Has tests</option>
+              <option value="partial">Partly tested</option>
+              <option value="none">No tests</option>
+            </select>
+          </label>
+          <label>Test notes<textarea aria-label="Test notes" placeholder="Framework, where the tests live, what is not covered" value={testNotes} onChange={(e) => setTestNotes(e.target.value)} /></label>
+        </fieldset>
         <fieldset>
           <legend>Owners</legend>
           {graph.owners.length === 0 && <small>No owners yet. Add some on the Owners page.</small>}
