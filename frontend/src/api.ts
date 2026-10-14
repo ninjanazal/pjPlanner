@@ -1,7 +1,7 @@
-import type { Project, Sprint, SprintInput, Issue, IssueInput, Graph, Group, GroupInput, OwnerInput, Module, ModuleInput, Owner, Relation } from './types';
+import type { JiraCreateFields, JiraImportResult, JiraUploadConfig, JiraInfo, JiraPreview, JiraStatus, JiraUploadBody, JiraUploadForm, JiraWriteResult, Project, Sprint, SprintInput, Issue, IssueInput, Graph, Group, GroupInput, OwnerInput, Module, ModuleInput, Owner, Relation } from './types';
 
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public extra?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -42,7 +42,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try { data = await res.json(); } catch { /* non-JSON body */ }
   if (!res.ok) {
     if (res.status === 401) window.dispatchEvent(new Event('pjplanner:locked')); // lets the header offer the unlock dialog
-    throw new ApiError(res.status, data?.error?.code ?? 'error', data?.error?.message ?? `Request failed (${res.status})`);
+    throw new ApiError(res.status, data?.error?.code ?? 'error', data?.error?.message ?? `Request failed (${res.status})`, data?.error?.extra);
   }
   return data as T;
 }
@@ -52,9 +52,28 @@ export const api = {
   unlock: () => request<{ ok: boolean }>('POST', '/unlock', {}),
   listProjects: () => request<Project[]>('GET', '/projects'),
   createProject: (p: { name: string; description?: string }) => request<Project>('POST', '/projects', p),
-  updateProject: (id: number, p: { name: string; description?: string }) => request<Project>('PUT', `/projects/${id}`, p),
+  updateProject: (id: number, p: { name: string; description?: string; jiraJql?: string | null; jiraLabel?: string | null; jiraWrite?: boolean; jiraEnabled?: boolean; jiraProjectId?: string | null; jiraUploadConfig?: JiraUploadConfig | null }) => request<Project>('PUT', `/projects/${id}`, p),
   deleteProject: (id: number) => request<void>('DELETE', `/projects/${id}`),
   importProject: (file: unknown) => request<Project>('POST', '/projects/import', file),
+  jiraStatus: () => request<JiraStatus>('GET', '/jira/status'),
+  jiraUploadForm: (issueId: number, q: { jiraProject?: string; issueType?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (q.jiraProject) qs.set('jiraProject', q.jiraProject);
+    if (q.issueType) qs.set('issueType', q.issueType);
+    return request<JiraUploadForm>('GET', `/issues/${issueId}/jira/upload-form${qs.size ? `?${qs}` : ''}`);
+  },
+  jiraCreateFields: (q: { jiraProject?: string; issueType?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (q.jiraProject) qs.set('jiraProject', q.jiraProject);
+    if (q.issueType) qs.set('issueType', q.issueType);
+    return request<JiraCreateFields>('GET', `/jira/create-fields${qs.size ? `?${qs}` : ''}`);
+  },
+  jiraUpload: (issueId: number, body: JiraUploadBody = {}) => request<JiraWriteResult>('POST', `/issues/${issueId}/jira/upload`, body),
+  jiraUpdate: (issueId: number, force = false) => request<JiraWriteResult>('POST', `/issues/${issueId}/jira/update`, force ? { force: true } : {}),
+  jiraRefresh: (issueId: number) => request<{ issue: Issue }>('POST', `/issues/${issueId}/jira/refresh`, {}),
+  jiraTest: () => request<JiraInfo>('POST', '/jira/test', {}),
+  jiraPreview: (f: { jql?: string; label?: string }) => request<JiraPreview>('POST', '/jira/preview', f),
+  jiraImport: (projectId: number) => request<JiraImportResult>('POST', `/projects/${projectId}/jira/import`, {}),
   getGraph: () => request<Graph>('GET', '/graph'),
   createModule: (m: ModuleInput) => request<Module>('POST', '/modules', m),
   updateModule: (id: number, m: ModuleInput) => request<Module>('PUT', `/modules/${id}`, m),

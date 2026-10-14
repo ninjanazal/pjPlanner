@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { ColorField, EMOJI } from '../components/LookFields';
 import { ModuleDialog } from '../components/ModuleDialog';
-import { EntityPage } from '../components/EntityPage';
+import { GroupPage } from '../components/GroupPage';
 import { addSavedColor, removeSavedColor, getSavedColors, useSavedColors, SAVED_COLORS_KEY } from '../savedColors';
 import type { Graph } from '../types';
 
@@ -84,15 +84,14 @@ describe('random icon on create', () => {
     await userEvent.click(screen.getByText('Edit'));
     expect(screen.getByLabelText('Icon')).toHaveValue('');
   });
-  it('EntityPage: create pre-fills, edit stays blank', async () => {
+  it('GroupPage: create pre-fills the icon, edit stays blank', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.999);
-    const props = { noun: 'owner' as const, modules: [], membersOf: () => [], save: vi.fn(), remove: vi.fn(), deleteMessage: () => '', emptyMembers: '', onChanged: () => {}, onOpenModule: () => {} };
-    render(<EntityPage {...props} items={[{ id: 1, name: 'Ann', color: null, icon: null }]} />);
-    await userEvent.click(screen.getByText(/^Add owner|^\+ ?Add/));
+    const g = { owners: [], modules: [], relations: [], groups: [{ id: 1, name: 'Core', color: null, icon: null, parentId: null }] };
+    const { unmount } = render(<GroupPage group={null} graph={g} issues={[]} onChanged={() => {}} onOpenModule={() => {}} />);
     expect(screen.getByLabelText('Icon')).toHaveValue(EMOJI[EMOJI.length - 1]);
-    await userEvent.click(screen.getByText('Cancel'));
-    await userEvent.click(screen.getByLabelText('Owner Ann'));
-    await userEvent.click(screen.getByText(/^Edit/));
+    unmount();
+    render(<GroupPage group={g.groups[0]} graph={g} issues={[]} onChanged={() => {}} onOpenModule={() => {}} />);
     expect(screen.getByLabelText('Icon')).toHaveValue('');
   });
+
 });

@@ -1,7 +1,7 @@
 // Pure geometry for group containers: nested bounding boxes around member cards, drag-drop membership and group moves.
 import type { Group, Module } from './types';
 
-export const GROUP_PAD = 28;
+export const GROUP_PAD = 44;
 export const GROUP_HEADER = 52;
 export interface Rect { x: number; y: number; w: number; h: number }
 export type CardRect = Rect & { id: number };

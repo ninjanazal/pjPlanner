@@ -3,15 +3,16 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { ModuleCard } from '../components/ModuleCard';
 import { CARD_BASE_H, CARD_MAX_W, CARD_MIN_W, cardHeight, cardWidth } from '../layout';
 
-const renderCard = (data: any) =>
-  render(<ReactFlowProvider><ModuleCard {...({ data, selected: false } as any)} /></ReactFlowProvider>);
+const renderCard = (data: any, selected = false) =>
+  render(<ReactFlowProvider><ModuleCard {...({ data, selected } as any)} /></ReactFlowProvider>);
 
 describe('ModuleCard', () => {
   it('shows name, owners and api count', () => {
     renderCard({ name: 'Wallet', owners: ['Jose', 'Pedro'], color: null, icon: '💰', apiItems: [{ kind: 'function', name: 'a', signature: '' }, { kind: 'type', name: 'b', signature: '' }] });
     expect(screen.getByText(/Wallet/)).toBeInTheDocument();
     expect(screen.getByText('Owners: Jose, Pedro')).toBeInTheDocument();
-    expect(screen.getAllByTestId('card-api-row')).toHaveLength(2);
+    expect(screen.getByText('2 API items')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('card-api-row')).toHaveLength(0);
   });
   it('shows owner icons in the owners line', () => {
     renderCard({ name: 'W', owners: ['🧑 Ann', 'Bob'], color: null, icon: null, apiItems: [] });
@@ -42,14 +43,13 @@ describe('ModuleCard', () => {
     renderCard({ name: 'D', owners: [], color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid' });
     expect(screen.getByTestId('module-card').getAttribute('style')).not.toMatch(/--card/);
   });
-  it('lists api rows with method, signature tooltip and +N more', () => {
+  it('opens the full api list with method and signature tooltip when selected', () => {
     const items = [{ kind: 'endpoint', name: 'POST /login', signature: 'POST /login (u,p)' },
       ...Array.from({ length: 6 }, (_, i) => ({ kind: 'function', name: `f${i}`, signature: `f${i}()` }))];
-    renderCard({ name: 'A', owners: [], color: null, icon: null, apiItems: items });
-    expect(screen.getAllByTestId('card-api-row')).toHaveLength(5);
+    renderCard({ name: 'A', owners: [], color: null, icon: null, apiItems: items }, true);
+    expect(screen.getAllByTestId('card-api-row')).toHaveLength(7);
     expect(screen.getByText('POST')).toHaveClass('m-POST');
     expect(screen.getByTitle('POST /login: POST /login (u,p)')).toBeInTheDocument();
-    expect(screen.getByText('+2 more')).toBeInTheDocument();
   });
   it('card height grows with rows, capped at 5 plus the more row', () => {
     expect(cardHeight(0)).toBe(CARD_BASE_H);

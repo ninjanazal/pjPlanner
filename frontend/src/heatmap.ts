@@ -8,7 +8,7 @@ export function sprintHeat(issues: Issue[], sprintId: number): Map<number, Heat>
   for (const i of issues) {
     if (i.type !== 'task' || i.sprintId !== sprintId || i.moduleId == null) continue;
     const h = by.get(i.moduleId) ?? { open: 0, done: 0, level: 0 };
-    if (i.state === 'open') h.open++; else h.done++;
+    if (i.state !== 'closed') h.open++; else h.done++;
     by.set(i.moduleId, h);
   }
   const max = Math.max(0, ...[...by.values()].map((h) => h.open));
@@ -28,7 +28,7 @@ export function ownerMap(issues: Issue[], modules: Module[], sprints: Sprint[], 
   for (const i of issues) {
     if (i.type !== 'task' || i.ownerId !== ownerId || i.moduleId == null || i.sprintId == null || !live.has(i.sprintId)) continue;
     const l = by.get(i.moduleId);
-    if (l) { if (i.state === 'open') l.open++; else l.done++; }
+    if (l) { if (i.state !== 'closed') l.open++; else l.done++; }
   }
   return by;
 }

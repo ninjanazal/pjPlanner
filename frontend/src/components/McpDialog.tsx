@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getWriteKey } from '../api';
+import { getProjectId, getWriteKey } from '../api';
 import { Modal } from './Modal';
 
 // navigator.clipboard only exists in secure contexts (https/localhost), so on a LAN http address fall back to execCommand.
@@ -33,6 +33,12 @@ function CopyBlock({ text, label }: { text: string; label: string }) {
   );
 }
 
+// Keep in step with the folders under mcp/skills.
+const SKILLS = [
+  { name: 'pjplanner-map', about: 'maps the codebase into modules and dependencies.' },
+  { name: 'pjplanner-breakdown', about: 'breaks a story or epic into tasks, per module.' },
+];
+
 export function McpDialog({ onClose }: { onClose: () => void }) {
   // Address and key come from the server so the command uses its LAN IP instead of the browser's localhost.
   const [info, setInfo] = useState<{ url: string } | null>(null);
@@ -42,22 +48,26 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
   const url = info?.url ?? window.location.origin;
   // The server never reveals the key: use the one entered in the header lock, else a placeholder to fill in.
   const key = getWriteKey() || '<WRITE_KEY from .env>';
+  // Pin the agent to the project open in the UI; without it the server falls back to the oldest project.
+  const projectId = getProjectId();
   const dir = '~/.pjplanner';
   const file = `${dir}/pjplanner-mcp.mjs`;
-  const add = `claude mcp add pjplanner -e PJPLANNER_URL=${url} -e PJPLANNER_API_KEY=${key} -- node ${file}`;
+  const add = `claude mcp add pjplanner -e PJPLANNER_URL=${url} -e PJPLANNER_API_KEY=${key}${projectId ? ` -e PJPLANNER_PROJECT=${projectId}` : ''} -- node ${file}`;
   // One paste: fetch the file into a fixed folder, then register it, so nobody has to place it by hand.
   const cmd = `mkdir -p ${dir} && curl -fsSL ${url}/api/mcp/download -o ${file} && ${add}`;
-  // Optional skill: teaches Claude Code to map the current project into this diagram.
-  const skillDir = '~/.claude/skills/pjplanner-map';
-  const skillCmd = `mkdir -p ${skillDir} && curl -fsSL ${url}/api/mcp/skill -o ${skillDir}/SKILL.md`;
+  // Optional skill suite: one folder per skill under ~/.claude/skills, all fetched by one paste.
+  const skillNames = SKILLS.map((k) => k.name).join(' ');
+  const skillCmd = `for s in ${skillNames}; do mkdir -p ~/.claude/skills/$s && curl -fsSL ${url}/api/mcp/skills/$s -o ~/.claude/skills/$s/SKILL.md; done`;
   const removeMcp = `claude mcp remove pjplanner && rm -rf ${dir}`;
-  const removeSkill = `rm -rf ${skillDir}`;
-  const config = JSON.stringify({ mcpServers: { pjplanner: { command: 'node', args: ['<full path to pjplanner-mcp.mjs>'], env: { PJPLANNER_URL: url, PJPLANNER_API_KEY: key } } } }, null, 2);
+  const removeSkill = `rm -rf ${SKILLS.map((k) => `~/.claude/skills/${k.name}`).join(' ')}`;
+  const config = JSON.stringify({ mcpServers: { pjplanner: { command: 'node', args: ['<full path to pjplanner-mcp.mjs>'], env: { PJPLANNER_URL: url, PJPLANNER_API_KEY: key, ...(projectId ? { PJPLANNER_PROJECT: String(projectId) } : {}) } } } }, null, 2);
   return (
     <Modal title="Connect an agent (MCP)" onClose={onClose}>
       <p className="mcp-lead">Let AI agents (Claude Code, Claude Desktop, Cursor) read and edit this plan. Needs Node 22+ and the same network as this server.</p>
+      {!projectId && <p className="error" role="alert">No project is active. Create or select a project first, then reopen this guide so the agent is pinned to it.</p>}
       <div className="mcp-facts">
         <span><b>Server</b> <code>{url}</code></span>
+        {projectId && <span><b>Project</b> <code>{projectId}</code></span>}
         <span className={getWriteKey() ? 'ok' : 'warn'}>{getWriteKey() ? '🔓 Your key is filled in' : '🔒 Replace the key placeholder before running'}</span>
       </div>
       <ol className="mcp-steps">
@@ -67,8 +77,11 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
           <CopyBlock text={cmd} label="install command" />
         </li>
         <li>
-          <h3><span aria-hidden="true">🗺️</span> Add the mapping skill <span className="mcp-tag opt">optional</span></h3>
-          <p>Then open Claude Code in your project and run <code>/pjplanner-map</code>. It proposes logical modules and dependencies, and creates them here once you approve.</p>
+          <h3><span aria-hidden="true">🧰</span> Add the skills <span className="mcp-tag opt">optional</span></h3>
+          <p>Then open Claude Code in your project and run one of:</p>
+          <ul className="mcp-skills">
+            {SKILLS.map((k) => <li key={k.name}><code>/{k.name}</code> {k.about}</li>)}
+          </ul>
           <CopyBlock text={skillCmd} label="skill command" />
         </li>
       </ol>
@@ -82,11 +95,11 @@ export function McpDialog({ onClose }: { onClose: () => void }) {
         <CopyBlock text={config} label="config" />
       </details>
       <details className="mcp-more mcp-remove">
-        <summary>Remove the MCP or the skill</summary>
+        <summary>Remove the MCP or the skills</summary>
         <p>Run in a terminal. Restart Claude Code afterwards.</p>
         <h4>Remove the MCP</h4>
         <CopyBlock text={removeMcp} label="remove MCP command" />
-        <h4>Remove the skill</h4>
+        <h4>Remove the skills</h4>
         <CopyBlock text={removeSkill} label="remove skill command" />
         <p className="hint">For Claude Desktop or Cursor, delete the <code>pjplanner</code> entry from the client's MCP config instead.</p>
       </details>

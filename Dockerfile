@@ -28,14 +28,14 @@ ENV NODE_ENV=production \
     DB_PATH=/data/pjplanner.db \
     STATIC_DIR=/app/frontend/dist \
     MCP_BUNDLE=/app/mcp/pjplanner-mcp.mjs \
-    MCP_SKILL=/app/mcp/SKILL.md
+    MCP_SKILLS=/app/mcp/skills
 WORKDIR /app/backend
 COPY --from=backend-build /app/backend/package*.json ./
 COPY --from=backend-build /app/backend/node_modules ./node_modules
 COPY --from=backend-build /app/backend/dist ./dist
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
 COPY --from=mcp-build /app/mcp/dist/pjplanner-mcp.mjs /app/mcp/pjplanner-mcp.mjs
-COPY mcp/skill/SKILL.md /app/mcp/SKILL.md
+COPY mcp/skills /app/mcp/skills
 RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 3030

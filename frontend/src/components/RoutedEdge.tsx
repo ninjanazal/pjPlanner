@@ -17,7 +17,7 @@ function roundedPath(pts: { x: number; y: number }[], radius: number): string {
   return `${d} L ${last.x} ${last.y}`;
 }
 
-export type RoutedEdgeData = { route?: Route; label?: string; color?: string | null; onLabelClick?: () => void };
+export type RoutedEdgeData = { route?: Route; label?: string; dashed?: boolean; color?: string | null; onLabelClick?: () => void };
 export type RoutedEdgeType = Edge<RoutedEdgeData, 'routed'>;
 
 const POS: Record<Side, Position> = { left: Position.Left, right: Position.Right, top: Position.Top, bottom: Position.Bottom };
@@ -37,7 +37,7 @@ export function RoutedEdge(props: EdgeProps<RoutedEdgeType>) {
     <>
       {selected && <path d={path} fill="none" stroke={EDGE_SELECTED} strokeWidth={9} strokeOpacity={0.35} strokeLinecap="round" />}
       <BaseEdge id={id} path={path} markerEnd={markerEnd} interactionWidth={interactionWidth}
-        style={{ stroke: selected && !data?.color ? EDGE_SELECTED : color }} />
+        style={{ stroke: selected && !data?.color ? EDGE_SELECTED : color, ...(data?.dashed ? { strokeDasharray: '2 7', strokeLinecap: 'round' as const } : null) }} />
       {data?.label && r?.label && (
         <EdgeLabelRenderer>
           <div className="edge-pill nodrag nopan" onClick={data.onLabelClick}

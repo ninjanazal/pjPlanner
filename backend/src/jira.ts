@@ -15,24 +15,97 @@ export const jiraConfig = (): JiraConfig | null => {
   return url && token ? { url, token } : null;
 };
 
-export async function jiraGet<T>(cfg: JiraConfig, path: string): Promise<T> {
+// A 400 from Jira carries its reasons in errorMessages (whole request) and errors (per field); both are passed on.
+async function jiraRequest<T>(cfg: JiraConfig, method: string, path: string, body?: unknown): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${cfg.url}${path}`, {
-      headers: { authorization: `Bearer ${cfg.token}`, accept: 'application/json' },
+      method,
+      headers: { authorization: `Bearer ${cfg.token}`, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(15000),
     });
   } catch (e: any) {
     throw new JiraError(502, `Cannot reach Jira at ${cfg.url}: ${e?.cause?.code ?? e?.message ?? 'network error'}`);
   }
   if (res.status === 401 || res.status === 403) throw new JiraError(502, 'Jira rejected the token (check JIRA_TOKEN and the bot account permissions)');
+  if (res.status === 400) {
+    const j = (await res.json().catch(() => null)) as { errorMessages?: string[]; errors?: Record<string, string> } | null;
+    const msg = [...(j?.errorMessages ?? []), ...Object.entries(j?.errors ?? {}).map(([k, v]) => `${k}: ${v}`)].join('; ');
+    throw new JiraError(400, msg || 'Jira rejected the request');
+  }
   if (res.status === 404) throw new JiraError(404, 'Not found in Jira');
+  if (res.status === 405) throw new JiraError(405, 'Jira answered 405');
   if (!res.ok) throw new JiraError(502, `Jira answered ${res.status}`);
+  if (res.status === 204) return undefined as T;
   try {
-    return (await res.json()) as T;
+    const text = await res.text();
+    return (text ? JSON.parse(text) : undefined) as T;
   } catch {
     throw new JiraError(502, 'Jira did not return JSON (is JIRA_URL the base address of Jira?)');
   }
+}
+
+export const jiraGet = <T>(cfg: JiraConfig, path: string): Promise<T> => jiraRequest<T>(cfg, 'GET', path);
+export const jiraPost = <T>(cfg: JiraConfig, path: string, body: unknown): Promise<T> => jiraRequest<T>(cfg, 'POST', path, body);
+export const jiraPut = <T>(cfg: JiraConfig, path: string, body: unknown): Promise<T> => jiraRequest<T>(cfg, 'PUT', path, body);
+
+// Writing to Jira needs three things: the project's Jira integration enabled, JIRA_WRITE=1 here, and the per-project jira_write flag.
+export const writeEnv = () => ({
+  enabled: ['1', 'true'].includes((process.env.JIRA_WRITE ?? '').trim().toLowerCase()),
+});
+
+export interface JiraProject {
+  id: string;
+  key: string;
+  name: string;
+  issueTypes: { id: string; name: string; subtask: boolean }[];
+}
+
+// A Jira project (by key or id) with the issue types it accepts.
+export async function jiraProject(cfg: JiraConfig, keyOrId: string): Promise<JiraProject> {
+  const p = await jiraGet<{ id?: string; key?: string; name?: string; issueTypes?: { id: string; name: string; subtask?: boolean }[] }>(cfg, `/rest/api/2/project/${encodeURIComponent(keyOrId)}`);
+  return {
+    id: String(p.id ?? ''), key: String(p.key ?? ''), name: String(p.name ?? ''),
+    issueTypes: (p.issueTypes ?? []).map((t) => ({ id: String(t.id), name: t.name, subtask: Boolean(t.subtask) })),
+  };
+}
+
+// The raw fields Jira offers when creating an issue of a type in a project. Data Center 8.4+ pages through
+// issue/createmeta/{project}/issuetypes/{type}; older servers (and Cloud-style 404/405) only have the expanded issue/createmeta.
+// Which one answers is detected from the response. Unreadable metadata (no permission, error) yields no fields and `readable: false` so creating still works.
+export async function jiraCreateMeta(cfg: JiraConfig, projectRef: string, typeId: string): Promise<{ fields: any[]; readable: boolean }> {
+  try {
+    const paged = await createMetaPaged(cfg, projectRef, typeId);
+    return { fields: paged ?? (await createMetaExpanded(cfg, projectRef, typeId)), readable: true };
+  } catch (e) {
+    if (e instanceof JiraError) return { fields: [], readable: false };
+    throw e;
+  }
+}
+
+async function createMetaPaged(cfg: JiraConfig, projectRef: string, typeId: string): Promise<any[] | null> {
+  const base = `/rest/api/2/issue/createmeta/${encodeURIComponent(projectRef)}/issuetypes/${encodeURIComponent(typeId)}`;
+  const out: any[] = [];
+  for (;;) {
+    let page: { values?: any[]; total?: number; isLast?: boolean };
+    try {
+      page = await jiraGet(cfg, `${base}?startAt=${out.length}&maxResults=50`);
+    } catch (e) {
+      if (e instanceof JiraError && (e.status === 404 || e.status === 405) && out.length === 0) return null;
+      throw e;
+    }
+    if (!Array.isArray(page.values)) return out.length ? out : null;
+    out.push(...page.values);
+    if (page.values.length === 0 || page.isLast || (typeof page.total === 'number' && out.length >= page.total) || (page.isLast === undefined && page.total === undefined)) return out;
+  }
+}
+
+async function createMetaExpanded(cfg: JiraConfig, projectRef: string, typeId: string): Promise<any[]> {
+  const qs = new URLSearchParams({ projectKeys: projectRef, issuetypeIds: typeId, expand: 'projects.issuetypes.fields' });
+  const r = await jiraGet<{ projects?: { issuetypes?: { fields?: Record<string, any> }[] }[] }>(cfg, `/rest/api/2/issue/createmeta?${qs}`);
+  const fields = r.projects?.[0]?.issuetypes?.[0]?.fields ?? {};
+  return Object.entries(fields).map(([id, f]) => ({ ...f, fieldId: f?.fieldId ?? id }));
 }
 
 export interface JiraInfo {
@@ -54,28 +127,32 @@ export async function jiraTest(cfg: JiraConfig): Promise<JiraInfo> {
   };
 }
 
-export interface JiraDiscovery {
-  project: { key: string; name: string };
-  issueTypes: { id: string; name: string; subtask: boolean }[];
-  epicLinkField: string | null;
-  // pjPlanner issue type -> suggested Jira issue type name (null when no match)
-  typeMap: Record<'epic' | 'story' | 'bug' | 'task', string | null>;
+export interface JiraField { id: string; name: string; custom: boolean }
+
+export async function jiraFields(cfg: JiraConfig): Promise<JiraField[]> {
+  const rows = await jiraGet<{ id: string; name: string; custom?: boolean }[]>(cfg, '/rest/api/2/field');
+  return rows.map((f) => ({ id: f.id, name: f.name, custom: Boolean(f.custom) }));
 }
 
-// Reads what a project's setup looks like so the manager can review a prefilled mapping instead of typing field ids.
-export async function jiraDiscover(cfg: JiraConfig, projectKey: string): Promise<JiraDiscovery> {
-  const key = encodeURIComponent(projectKey);
-  const [project, fields] = await Promise.all([
-    jiraGet<{ key: string; name: string; issueTypes?: { id: string; name: string; subtask?: boolean }[] }>(cfg, `/rest/api/2/project/${key}`),
-    jiraGet<{ id: string; name: string; custom?: boolean }[]>(cfg, '/rest/api/2/field'),
-  ]);
-  const issueTypes = (project.issueTypes ?? []).map((t) => ({ id: t.id, name: t.name, subtask: Boolean(t.subtask) }));
-  const find = (...names: string[]) =>
-    issueTypes.find((t) => !t.subtask && names.includes(t.name.toLowerCase()))?.name ?? null;
-  return {
-    project: { key: project.key, name: project.name },
-    issueTypes,
-    epicLinkField: fields.find((f) => f.custom && f.name === 'Epic Link')?.id ?? null,
-    typeMap: { epic: find('epic'), story: find('story'), bug: find('bug'), task: find('task') },
-  };
+export interface JiraLinkType { id: string; name: string; inward: string; outward: string }
+
+export async function jiraLinkTypes(cfg: JiraConfig): Promise<JiraLinkType[]> {
+  const r = await jiraGet<{ issueLinkTypes?: { id: string; name: string; inward?: string; outward?: string }[] }>(cfg, '/rest/api/2/issueLinkType');
+  return (r.issueLinkTypes ?? []).map((t) => ({ id: String(t.id), name: t.name, inward: t.inward ?? '', outward: t.outward ?? '' }));
+}
+
+export interface JiraIssue { key: string; fields: Record<string, any> }
+
+// Runs a JQL search page by page. `total` is what Jira matched; only the first `max` issues are fetched.
+export async function jiraSearch(cfg: JiraConfig, jql: string, fields: string[], max: number): Promise<{ total: number; issues: JiraIssue[] }> {
+  const issues: JiraIssue[] = [];
+  let total = 0;
+  while (issues.length < max) {
+    const qs = new URLSearchParams({ jql, fields: fields.join(','), startAt: String(issues.length), maxResults: String(Math.min(100, max - issues.length)) });
+    const page = await jiraGet<{ total: number; issues: JiraIssue[] }>(cfg, `/rest/api/2/search?${qs}`);
+    total = page.total;
+    issues.push(...page.issues);
+    if (page.issues.length === 0 || issues.length >= total) break;
+  }
+  return { total, issues };
 }

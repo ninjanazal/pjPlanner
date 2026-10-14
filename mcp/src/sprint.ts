@@ -11,9 +11,9 @@ const bucket = (issues: SprintIssue[], items: Named[], idOf: (i: SprintIssue) =>
   const out = items
     .map((x) => ({ name: x.name, id: x.id, issues: issues.filter((i) => idOf(i) === x.id) }))
     .filter((g) => g.issues.length > 0)
-    .map((g) => ({ ...g, open: g.issues.filter((i) => i.state === 'open').length, issues: g.issues.map((i) => brief(i, owners, modules)) }));
+    .map((g) => ({ ...g, open: g.issues.filter((i) => i.state !== 'closed').length, issues: g.issues.map((i) => brief(i, owners, modules)) }));
   const rest = issues.filter((i) => !items.some((x) => x.id === idOf(i)));
-  if (rest.length) out.push({ name: '(none)', id: null as unknown as number, open: rest.filter((i) => i.state === 'open').length, issues: rest.map((i) => brief(i, owners, modules)) });
+  if (rest.length) out.push({ name: '(none)', id: null as unknown as number, open: rest.filter((i) => i.state !== 'closed').length, issues: rest.map((i) => brief(i, owners, modules)) });
   return out;
 };
 

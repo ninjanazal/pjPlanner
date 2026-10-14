@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, ApiError, getProjectId, setProjectId } from './api';
 import type { Graph, Issue, Module, Project, Relation, Sprint } from './types';
+import { Logo } from './components/Logo';
 import { GraphView } from './components/GraphView';
 import { ModuleDialog } from './components/ModuleDialog';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { LinkDialog } from './components/LinkDialog';
 import { OwnersPage } from './components/OwnersPage';
+import { ProjectOverview } from './components/ProjectOverview';
 import { IssuesPanel } from './components/IssuesPanel';
 import { IssuesPage } from './components/IssuesPage';
 import { SprintsPage } from './components/SprintsPage';
@@ -15,6 +17,8 @@ import { autoAssign, OWNERS_PER_MODULE } from './autoAssign';
 import { LockButton } from './components/LockButton';
 import { McpDialog } from './components/McpDialog';
 import { ProjectsPage } from './components/ProjectsPage';
+import { IntegrationsDialog } from './components/IntegrationsDialog';
+import { JiraUrlContext } from './components/IssuesPage';
 import { ProjectSwitcher } from './components/ProjectSwitcher';
 import { useHashRoute } from './route';
 import { useTheme } from './theme';
@@ -26,19 +30,23 @@ export default function App() {
   // selectedId is the highlighted card (stays after its popup closes); dialog is the open popup.
   const [issues, setIssues] = useState<Issue[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [linkId, setLinkId] = useState<number | null>(null); // the selected link (its two ends light up); like selectedId it outlives its popup
   const [sprints, setSprints] = useState<Sprint[]>([]);
   const [issueSel, setIssueSel] = useState<number | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [integrationsOpen, setIntegrationsOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [jiraUrl, setJiraUrl] = useState<string | null>(null);
   const [noProjects, setNoProjects] = useState(false); // the server answered and has no project yet
   const [projectId, setProject] = useState<number | null>(getProjectId());
+  const activeProject = projects.find((p) => p.id === projectId) ?? projects[0] ?? null;
   const [heatSprint, setHeatSprint] = useState<number | null>(null);
   const [personId, setPersonId] = useState<number | null>(null);
   const heat = useMemo(() => (heatSprint != null && sprints.some((x) => x.id === heatSprint) ? sprintHeat(issues, heatSprint) : null), [issues, sprints, heatSprint]);
   const [error, setError] = useState<string | null>(null);
   const { theme, toggle } = useTheme();
-  const [route, go] = useHashRoute();
+  const [route, go, issueId, ownerRef, groupRef] = useHashRoute();
   const [picked, setPicked] = useState<number[]>([]); // cards selected on the diagram (may be several)
   const clip = useRef<{ modules: Module[]; relations: Relation[] } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<number[] | null>(null);
@@ -62,7 +70,7 @@ export default function App() {
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
   // Per-project view state must not leak into the next project.
-  const resetView = () => { setSelectedId(null); setIssueSel(null); setDialog(null); setHeatSprint(null); setPersonId(null); setFocusId(null); };
+  const resetView = () => { setSelectedId(null); setLinkId(null); setIssueSel(null); setDialog(null); setHeatSprint(null); setPersonId(null); setFocusId(null); };
   const switchProject = useCallback((id: number) => {
     if (id === getProjectId()) return;
     setProjectId(id);
@@ -97,9 +105,31 @@ export default function App() {
     } else setProject(pick.id);
   }, [refreshAll]);
   useEffect(() => { loadProjects(); }, [loadProjects]);
+  useEffect(() => { api.jiraStatus().then((s) => setJiraUrl(s?.url ?? null)).catch(() => {}); }, []);
   useEffect(() => { if (route !== 'diagram') { setFocusId(null); setDialog(null); } }, [route]);
 
   // Diagram shortcuts: Del removes, Ctrl+C / Ctrl+V copy and paste the selected cards (and the links between them).
+  // Undo / redo (Ctrl+Z, Ctrl+Y or Ctrl+Shift+Z) for card moves, auto layout and group changes.
+  // Steps made within 600 ms of each other (a drag that also changes group) undo together.
+  type Step = { undo: () => Promise<unknown>; redo: () => Promise<unknown>; at: number };
+  const past = useRef<Step[]>([]);
+  const future = useRef<Step[]>([]);
+  const graphRef = useRef(graph);
+  graphRef.current = graph;
+  const record = (undo: () => Promise<unknown>, redo: () => Promise<unknown>) => {
+    const now = Date.now();
+    const last = past.current[past.current.length - 1];
+    if (last && now - last.at < 600) {
+      const [u, r] = [last.undo, last.redo];
+      past.current[past.current.length - 1] = { undo: async () => { await undo(); await u(); }, redo: async () => { await r(); await redo(); }, at: now };
+    } else past.current = [...past.current.slice(-49), { undo, redo, at: now }];
+    future.current = [];
+  };
+  const travel = async (from: typeof past, to: typeof future, dir: 'undo' | 'redo') => {
+    const s = from.current.pop();
+    if (!s) return;
+    try { await s[dir](); to.current.push(s); } catch (e) { setError((e as Error).message); }
+  };
   const keys = useRef<(e: KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
     if (route !== 'diagram' || !graph || dialog || pendingDelete || e.defaultPrevented) return;
@@ -107,6 +137,8 @@ export default function App() {
     if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     const ids = picked.length ? picked : selectedId != null ? [selectedId] : [];
     const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); travel(past, future, 'undo'); return; }
+    if (mod && (e.key.toLowerCase() === 'y' || (e.key.toLowerCase() === 'z' && e.shiftKey))) { e.preventDefault(); travel(future, past, 'redo'); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && ids.length) { e.preventDefault(); setPendingDelete(ids); }
     else if (mod && e.key.toLowerCase() === 'c' && ids.length) {
       const set = new Set(ids);
@@ -127,6 +159,7 @@ export default function App() {
         const body = {
           name: `${m.name} (copy)`, description: m.description, ownerIds: m.ownerIds, color: m.color, icon: m.icon, textColor: m.textColor,
           strokeColor: m.strokeColor, strokeStyle: m.strokeStyle, apiItems: m.apiItems.map(({ id: _id, ...rest }) => rest), groupId: m.groupId,
+          testStatus: m.testStatus, testNotes: m.testNotes,
         };
         const n = await api.createModule(body);
         made.set(m.id, n.id);
@@ -151,7 +184,7 @@ export default function App() {
     return (
       <div className="app">
         <header>
-          <div className="header-left"><h1>pjPlanner</h1></div>
+          <div className="header-left"><span className="brand"><Logo size={30} /><h1 className="sr-only">pjPlanner</h1></span></div>
           <div />
           <div className="row"><LockButton /><button className="icon-btn" onClick={toggle} aria-label="Toggle theme" title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>{theme === 'dark' ? '☀️' : '🌙'}</button></div>
         </header>
@@ -173,17 +206,26 @@ export default function App() {
       setDialog({ kind: 'link', id: rel.id });
     } catch (e) { setError((e as Error).message); }
   };
-  const nodeClick = (id: number) => { setSelectedId(id); setDialog({ kind: 'module', id }); };
+  // One click selects (highlights its dependencies); double click or the legend's button opens the details popup.
+  const nodeClick = (id: number) => { setSelectedId(id); setLinkId(null); };
+  const linkClick = (id: number) => { setLinkId(id); setSelectedId(null); };
+  const linkOpen = (id: number) => { linkClick(id); setDialog({ kind: 'link', id }); };
+  const nodeOpen = (id: number) => { setSelectedId(id); setDialog({ kind: 'module', id }); };
   const openModule = (id: number) => { setSelectedId(id); setDialog({ kind: 'module', id }); setFocusId(id); go('diagram'); };
-  const assignGroup = async (id: number, groupId: number | null) => {
-    const m = graph.modules.find((x) => x.id === id);
+  const setGroup = async (id: number, groupId: number | null) => {
+    const m = graphRef.current?.modules.find((x) => x.id === id);
     if (!m) return;
+    await api.updateModule(id, {
+      name: m.name, description: m.description, ownerIds: m.ownerIds, color: m.color, icon: m.icon,
+      textColor: m.textColor, strokeColor: m.strokeColor, strokeStyle: m.strokeStyle, apiItems: m.apiItems, groupId,
+    });
+    await refresh();
+  };
+  const assignGroup = async (id: number, groupId: number | null) => {
+    const prev = graph.modules.find((x) => x.id === id)?.groupId ?? null;
     try {
-      await api.updateModule(id, {
-        name: m.name, description: m.description, ownerIds: m.ownerIds, color: m.color, icon: m.icon,
-        textColor: m.textColor, strokeColor: m.strokeColor, strokeStyle: m.strokeStyle, apiItems: m.apiItems, groupId,
-      });
-      await refresh();
+      await setGroup(id, groupId);
+      if (prev !== groupId) record(() => setGroup(id, prev), () => setGroup(id, groupId));
     } catch (e) { setError((e as Error).message); }
   };
   const needsOwners = graph.modules.some((m) => m.ownerIds.length < OWNERS_PER_MODULE);
@@ -206,17 +248,28 @@ export default function App() {
     const by = new Map(pos.map((p) => [p.id, p]));
     setGraph((g) => g && { ...g, modules: g.modules.map((m) => { const p = by.get(m.id); return p ? { ...m, x: p.x, y: p.y } : m; }) });
   };
-  const move = (id: number, x: number, y: number) =>
-    api.setPosition(id, { x, y })
+  const savePositions = async (positions: { id: number; x: number; y: number }[]) => {
+    const saved = await api.setPositions(positions);
+    const back = new Map((saved ?? []).map((m) => [m.id, m]));
+    patchPositions(positions.map((p) => ({ id: p.id, x: back.get(p.id)?.x ?? p.x, y: back.get(p.id)?.y ?? p.y })));
+  };
+  // Remember where the cards were so the move can be undone; cards that never had a saved position are left out.
+  const recordMove = (positions: { id: number; x: number; y: number }[]) => {
+    const before = positions.flatMap((p) => {
+      const m = graphRef.current?.modules.find((x) => x.id === p.id);
+      return m && m.x != null && m.y != null ? [{ id: p.id, x: m.x, y: m.y }] : [];
+    });
+    if (before.length) record(() => savePositions(before), () => savePositions(positions));
+  };
+  const move = (id: number, x: number, y: number) => {
+    recordMove([{ id, x, y }]);
+    return api.setPosition(id, { x, y })
       .then((m) => patchPositions([{ id, x: m?.x ?? x, y: m?.y ?? y }]))
       .catch((e) => setError((e as Error).message));
+  };
   const moveMany = async (positions: { id: number; x: number; y: number }[]) => {
-    try {
-      const saved = await api.setPositions(positions);
-      const back = new Map((saved ?? []).map((m) => [m.id, m]));
-      patchPositions(positions.map((p) => ({ id: p.id, x: back.get(p.id)?.x ?? p.x, y: back.get(p.id)?.y ?? p.y })));
-      return true;
-    } catch (e) { setError((e as Error).message); return false; }
+    recordMove(positions);
+    try { await savePositions(positions); return true; } catch (e) { setError((e as Error).message); return false; }
   };
 
   const module = dialog?.kind === 'module' ? graph.modules.find((m) => m.id === dialog.id) : undefined;
@@ -226,11 +279,12 @@ export default function App() {
   const person = personSel ? ownerMap(issues, graph.modules, sprints, personSel.id, personSel.color) : null;
   const heatSel = sprints.find((x) => x.id === heatSprint);
   const selIssue = issues.find((i) => i.id === issueSel);
-  const highlight = dialog?.kind === 'link' ? dialog : selectedModule ? { kind: 'module' as const, id: selectedModule.id } : null;
+  const highlight = dialog?.kind === 'link' ? dialog : linkId != null ? { kind: 'link' as const, id: linkId } : selectedModule ? { kind: 'module' as const, id: selectedModule.id } : null;
+
+  const addModule = <button className="fab" onClick={() => setDialog({ kind: 'new' })}><span aria-hidden="true">+</span> Add module</button>;
 
   const diagramTools = (
     <>
-      <button className="toolbar-btn primary-tool" onClick={() => setDialog({ kind: 'new' })}>+ Add module</button>
       {needsOwners && <button className="toolbar-btn" onClick={assignOwners} title={`Give every module ${OWNERS_PER_MODULE} owners, spreading the work evenly`}>Auto-assign</button>}
       {(sprints.length > 0 || graph.owners.length > 0) && (
         <label className="view-pick toolbar-btn" title="Colour the diagram by sprint load or by person">
@@ -256,7 +310,7 @@ export default function App() {
     <div className="app">
       <header>
         <div className="header-left">
-          <h1>pjPlanner</h1>
+          <button className="brand brand-btn" onClick={() => go('diagram')} aria-label="Go to diagram" title="Diagram"><Logo size={30} /><h1 className="sr-only">pjPlanner</h1></button>
           {projects.length > 0 && (
             <ProjectSwitcher projects={projects} currentId={projectId} onSwitch={switchProject} onManage={() => go('projects')} />
           )}
@@ -276,9 +330,9 @@ export default function App() {
               Groups
             </button>
             <span className="nav-sep" aria-hidden="true" />
-            <button className={`nav-item${route === 'projects' ? ' active' : ''}`} aria-current={route === 'projects' ? 'page' : undefined} onClick={() => go('projects')}>
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M1.5 4.5a1 1 0 0 1 1-1h3.4l1.4 1.5h5.2a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1z" /></svg>
-              Projects
+            <button className={`nav-item${route === 'overview' ? ' active' : ''}`} aria-current={route === 'overview' ? 'page' : undefined} onClick={() => go('overview')}>
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2 14V8M6 14V3M10 14V6M14 14V10" /></svg>
+              Overview
             </button>
             <button className={`nav-item${route === 'sprints' ? ' active' : ''}`} aria-current={route === 'sprints' ? 'page' : undefined} onClick={() => go('sprints')}>
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M2 8a6 6 0 0 1 10.5-4M14 8a6 6 0 0 1-10.5 4" /><path d="M12.5 1v3h-3M3.5 15v-3h3" /></svg>
@@ -292,6 +346,9 @@ export default function App() {
         </div>
         <div className="row">
           <LockButton />
+          <button className={`icon-btn${jiraUrl && activeProject?.jiraEnabled ? ' has-dot' : ''}`} onClick={() => setIntegrationsOpen(true)} aria-label="Integrations" title={jiraUrl && activeProject?.jiraEnabled ? 'Integrations: Jira is enabled' : 'Integrations (Jira)'}>
+            <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M6.5 9.5l3-3M5 7L3.5 8.5a2.1 2.1 0 0 0 3 3L8 10M11 9l1.5-1.5a2.1 2.1 0 0 0-3-3L8 6" /></svg>
+          </button>
           <button className="icon-btn" onClick={() => setMcpOpen(true)} aria-label="Connect agent" title="Connect an AI agent (MCP)">
             <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M5.5 1.5v3M10.5 1.5v3M3.5 4.5h9v3a4.5 4.5 0 0 1-9 0zM8 12v2.5" /></svg>
           </button>
@@ -299,30 +356,40 @@ export default function App() {
         </div>
       </header>
       {mcpOpen && <McpDialog onClose={() => setMcpOpen(false)} />}
+      {integrationsOpen && (
+        <IntegrationsDialog project={activeProject} issues={issues}
+          onChanged={() => loadProjects()} onImported={refreshAll} onClose={() => setIntegrationsOpen(false)} />
+      )}
       {error && <div className="banner error" role="alert">{error}</div>}
-      {route === 'projects' ? (
+      {route === 'overview' ? (
+        <ProjectOverview project={activeProject} graph={graph} issues={issues} sprints={sprints} />
+      ) : route === 'projects' ? (
         <ProjectsPage projects={projects} currentId={projectId} onSwitch={switchProject} onChanged={(open) => loadProjects(open)} />
       ) : route === 'sprints' ? (
         <SprintsPage sprints={sprints} issues={issues} modules={graph.modules} owners={graph.owners} relations={graph.relations} onChanged={refreshIssuesAndSprints} />
       ) : route === 'issues' ? (
-        <IssuesPage issues={issues} sprints={sprints} modules={graph.modules} owners={graph.owners} onChanged={refreshIssuesAndSprints} />
+        <JiraUrlContext.Provider value={jiraUrl}>
+          <IssuesPage issues={issues} sprints={sprints} modules={graph.modules} owners={graph.owners} issueId={issueId} onChanged={refreshIssuesAndSprints} project={activeProject} />
+        </JiraUrlContext.Provider>
       ) : route === 'groups' ? (
-        <GroupsPage graph={graph} onChanged={refreshAll} onOpenModule={openModule} />
+        <GroupsPage graph={graph} issues={issues} groupRef={groupRef} onChanged={refreshAll} onOpenModule={openModule} />
       ) : route === 'owners' ? (
-        <OwnersPage graph={graph} onChanged={refreshAll} onOpenModule={openModule} />
+        <OwnersPage graph={graph} issues={issues} sprints={sprints} ownerRef={ownerRef} onChanged={refreshAll} onOpenModule={openModule} />
       ) : (
       <main>
         {graph.modules.length === 0 ? (
-          <div className="center">No modules yet.<div className="empty-tools">{diagramTools}</div></div>
+          <div className="center">No modules yet.<div className="empty-tools">{addModule}</div></div>
         ) : (
           <GraphView
             theme={theme}
             graph={graph}
             selected={highlight}
             onNodeClick={nodeClick}
+            onNodeOpen={nodeOpen}
             onAssignGroup={assignGroup}
-            onLinkClick={(id) => setDialog({ kind: 'link', id })}
-            onPaneClick={() => setSelectedId(null)}
+            onLinkClick={linkClick}
+            onLinkOpen={linkOpen}
+            onPaneClick={() => { setSelectedId(null); setLinkId(null); }}
             onSelectionChange={(ids) => setPicked((p) => (p.length === ids.length && p.every((x, i) => x === ids[i]) ? p : ids))}
             onConnect={connect}
             onMove={move}
@@ -331,6 +398,7 @@ export default function App() {
             highlightedModuleIds={selIssue ? selIssue.rollupModuleIds : null}
             heat={heat}
             person={person}
+            onAdd={() => setDialog({ kind: 'new' })}
             tools={diagramTools}
           />
         )}

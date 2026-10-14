@@ -20,7 +20,7 @@ const readText = (f: File) => new Promise<string>((resolve, reject) => {
 });
 
 export function ProjectsPage({ projects, currentId, onSwitch, onChanged }: Props) {
-  const { error, run } = useAction();
+  const { error, run } = useAction(true);
   const [name, setName] = useState('');
   const [editing, setEditing] = useState<{ id: number; name: string; description: string } | null>(null);
   const [deleting, setDeleting] = useState<Project | null>(null);
@@ -28,19 +28,19 @@ export function ProjectsPage({ projects, currentId, onSwitch, onChanged }: Props
 
   const create = (e: React.FormEvent) => {
     e.preventDefault();
-    run(async () => { const p = await api.createProject({ name }); setName(''); onChanged(p.id); });
+    run(async () => { const p = await api.createProject({ name }); setName(''); onChanged(p.id); }, 'Project created');
   };
   const save = () => editing && run(async () => {
     await api.updateProject(editing.id, { name: editing.name, description: editing.description });
     setEditing(null);
     onChanged();
-  });
+  }, 'Project saved');
   const importFile = (f: File | undefined) => f && run(async () => {
     let data: unknown;
     try { data = JSON.parse(await readText(f)); } catch { throw new Error('That file is not valid JSON'); }
     const p = await api.importProject(data);
     onChanged(p.id);
-  });
+  }, 'Project imported');
 
   return (
     <div className="projects-page">
@@ -89,7 +89,7 @@ export function ProjectsPage({ projects, currentId, onSwitch, onChanged }: Props
         <ConfirmDialog message={`Delete project "${deleting.name}" and everything in it (${deleting.moduleCount} modules, ${deleting.issueCount} issues)? This cannot be undone. Export it first to keep a copy.`}
           confirmLabel="Delete project"
           onCancel={() => setDeleting(null)}
-          onConfirm={() => { const d = deleting; setDeleting(null); run(async () => { await api.deleteProject(d.id); onChanged(); }); }} />
+          onConfirm={() => { const d = deleting; setDeleting(null); run(async () => { await api.deleteProject(d.id); onChanged(); }, 'Project deleted'); }} />
       )}
     </div>
   );

@@ -20,6 +20,18 @@ const dirtyModals = new Set<symbol>();
 // Lets route handling refuse to leave the page while a popup holds unsaved edits.
 export const hasDirtyModal = () => dirtyModals.size > 0;
 
+// Same guard for unsaved edits that live on a page instead of a popup.
+export function useDirtyGuard(dirty: boolean) {
+  useEffect(() => {
+    if (!dirty) return;
+    const key = Symbol('page-dirty');
+    dirtyModals.add(key);
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => { dirtyModals.delete(key); window.removeEventListener('beforeunload', warn); };
+  }, [dirty]);
+}
+
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function Modal({ title, headerExtra, onClose, dirty = false, role = 'dialog', size = 'md', children }: Props) {
