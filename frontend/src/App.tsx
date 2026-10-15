@@ -20,6 +20,7 @@ import { ProjectsPage } from './components/ProjectsPage';
 import { IntegrationsDialog } from './components/IntegrationsDialog';
 import { JiraUrlContext } from './components/IssuesPage';
 import { ProjectSwitcher } from './components/ProjectSwitcher';
+import { clientId, setEditor } from './editor';
 import { useHashRoute } from './route';
 import { useTheme } from './theme';
 
@@ -105,6 +106,23 @@ export default function App() {
     } else setProject(pick.id);
   }, [refreshAll]);
   useEffect(() => { loadProjects(); }, [loadProjects]);
+  // Live updates: the server pushes a `changed` event after anyone else's write and the editor lease changes. A reconnect
+  // reloads too, since events may have been missed meanwhile.
+  const liveProject = activeProject?.id ?? null;
+  const refreshAllRef = useRef(refreshAll);
+  refreshAllRef.current = refreshAll;
+  useEffect(() => {
+    if (typeof EventSource === 'undefined' || liveProject === null) return;
+    setEditor(null);
+    const es = new EventSource(`/api/events?project=${liveProject}`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let opened = false;
+    const soon = () => { clearTimeout(timer); timer = setTimeout(() => refreshAllRef.current(), 150); };
+    es.addEventListener('open', () => { if (opened) soon(); opened = true; });
+    es.addEventListener('changed', (e) => { try { if (JSON.parse((e as MessageEvent).data).by !== clientId) soon(); } catch { /* ignore */ } });
+    es.addEventListener('editor', (e) => { try { setEditor(JSON.parse((e as MessageEvent).data).editor ?? null); } catch { /* ignore */ } });
+    return () => { clearTimeout(timer); es.close(); };
+  }, [liveProject]);
   useEffect(() => { api.jiraStatus().then((s) => setJiraUrl(s?.url ?? null)).catch(() => {}); }, []);
   useEffect(() => { if (route !== 'diagram') { setFocusId(null); setDialog(null); } }, [route]);
 

@@ -735,3 +735,10 @@ button.primary.jira-btn:hover:not(:disabled) { background: var(--jira-hover); }
 .integ-field-name { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .integ-field-row .hint { grid-column: 1 / -1; }
 .brand-btn { display: inline-flex; align-items: center; padding: 0; border: 0; background: none; cursor: pointer; color: inherit; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.icon-btn.spinning svg.jira-icon { animation: spin 0.9s linear infinite; }
+.icon-btn.spinning svg.jira-logo { animation: none; }
+.icon-btn:has(.jira-logo) { display: inline-flex; align-items: center; gap: 4px; }
+.editor-status { font-size: 12px; margin-right: 8px; opacity: .85; }
+.editor-status button { margin-left: 4px; font-size: 12px; }
