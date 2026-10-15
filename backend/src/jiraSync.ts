@@ -71,7 +71,7 @@ export interface LinkFields { epicLink: string | null; parentLink: string | null
 
 // Fields a search must ask for to plan an import.
 export const searchFields = (links: LinkFields) =>
-  ['summary', 'description', 'issuetype', 'status', 'parent', ...(links.epicLink ? [links.epicLink] : []), ...(links.parentLink ? [links.parentLink] : [])];
+  ['summary', 'description', 'issuetype', 'status', 'parent', 'issuelinks', ...(links.epicLink ? [links.epicLink] : []), ...(links.parentLink ? [links.parentLink] : [])];
 
 export const linkFields = (fields: JiraField[]): LinkFields => ({
   epicLink: fields.find((f) => f.custom && f.name === 'Epic Link')?.id ?? null,
@@ -113,6 +113,16 @@ export function planImport(found: JiraIssue[], links: LinkFields): ImportPlan {
       const pt = typeOf(p);
       if (pt && PARENTS[type].includes(pt)) { parentKey = cur; break; }
       cur = rawParent(p);
+    }
+    // No real parent: a task is linked to its story/bug (or anything under an epic) by an issue link when pjPlanner uploaded it.
+    // Upload creates that link with the child inward and the parent outward, so only outward links count: a link the other
+    // way ("is blocked by" seen from the blocker, etc.) or one added by hand in the reverse direction is not a parent.
+    if (!parentKey) {
+      for (const l of Array.isArray(i.fields.issuelinks) ? i.fields.issuelinks : []) {
+        const k = refKey(l?.outwardIssue);
+        const pt = k ? byKey.get(k) && typeOf(byKey.get(k)!) : null;
+        if (k && pt && PARENTS[type].includes(pt)) { parentKey = k; break; }
+      }
     }
     issues.push({
       key: i.key, type,

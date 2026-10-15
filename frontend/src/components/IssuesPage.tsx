@@ -3,7 +3,7 @@ import { api } from '../api';
 import { ISSUE_STATES, ISSUE_TYPES, STATE_LABEL, TYPE_ICON, type Issue, type IssueState, type IssueType, type Module, type Owner, type Project, type Sprint } from '../types';
 import { buildTree, childTypes, hideClosed, parentOptions, type IssueNode } from '../issueTree';
 import { QuickClose } from './QuickClose';
-import { JiraLogo } from './JiraLogo';
+import { JiraLogo, RefreshIcon } from './JiraLogo';
 import { BreakdownDialog } from './BreakdownDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
@@ -21,6 +21,20 @@ const openIssue = (i: Issue) => { window.location.hash = issueHash(i.id); };
 export function IssuesPage({ issues, sprints = [], modules, owners, issueId = null, onChanged, project = null }: Props) {
   const [hide, setHide] = useState(true);
   const [editing, setEditing] = useState<Issue | 'new' | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const { error: syncError, run } = useAction(true);
+  const canSync = Boolean(project?.jiraEnabled && project.jiraJql);
+  const syncAll = async () => {
+    if (!project) return;
+    setSyncing(true);
+    try {
+      await run(async () => {
+        const r = await api.jiraImport(project.id);
+        onChanged();
+        return r;
+      }, 'Synced with Jira');
+    } finally { setSyncing(false); }
+  };
   const all = buildTree(issues);
   const tree = hide ? hideClosed(all) : all;
   const closedList = issues.filter((i) => i.state === 'closed').sort((a, b) => b.id - a.id);
@@ -35,9 +49,11 @@ export function IssuesPage({ issues, sprints = [], modules, owners, issueId = nu
         <h2>Issues</h2>
         <div className="row">
           <label className="check"><input type="checkbox" checked={hide} onChange={(e) => setHide(e.target.checked)} />Hide closed</label>
+          {canSync && <button className={`icon-btn${syncing ? ' spinning' : ''}`} onClick={syncAll} disabled={syncing} title="Sync with Jira" aria-label="Sync with Jira"><JiraLogo size={14} /><RefreshIcon /></button>}
           <button className="primary" onClick={() => setEditing('new')}>Add issue</button>
         </div>
       </div>
+      {syncError && <p className="error" role="alert">{syncError}</p>}
       {tree.length === 0 && <p className="hint">{issues.length === 0 ? 'No issues yet. Add one to start tracking work.' : 'All issues are closed.'}</p>}
       <ul className="issue-tree" role="tree">
         {tree.map((n) => <IssueRow key={n.issue.id} node={n} depth={0} modules={modules} owners={owners} onChanged={onChanged} />)}

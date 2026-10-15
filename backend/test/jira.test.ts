@@ -287,3 +287,16 @@ describe('jira import', () => {
     expect(JSON.stringify((await run()).body)).not.toContain('secret-token');
   });
 });
+
+describe('planImport issue links', () => {
+  it('parents a task under the story it is linked to', async () => {
+    const { planImport } = await import('../src/jiraSync.js');
+    const mk = (key: string, type: string, extra: Record<string, unknown> = {}) =>
+      ({ key, fields: { summary: key, issuetype: { name: type }, status: { name: 'To Do' }, ...extra } });
+    const plan = planImport(
+      [mk('A-1', 'Story'), mk('A-2', 'Task', { issuelinks: [{ outwardIssue: { key: 'A-1' } }] }), mk('A-3', 'Task', { issuelinks: [{ inwardIssue: { key: 'A-2' } }] })],
+      { epicLink: null, parentLink: null, epicName: null },
+    );
+    expect(plan.issues.map((i) => i.parentKey)).toEqual([null, 'A-1', null]);
+  });
+});

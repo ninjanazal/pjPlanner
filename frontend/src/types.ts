@@ -80,3 +80,6 @@ export interface Sprint {
   issueIds: number[]; openCount: number; closedCount: number;
 }
 export interface SprintInput { name: string; goal?: string; state?: SprintState }
+
+// The client currently holding a project's editor lease (null: nobody).
+export type Editor = { clientId: string; name: string } | null;

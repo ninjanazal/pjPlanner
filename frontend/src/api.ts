@@ -1,4 +1,5 @@
-import type { JiraCreateFields, JiraImportResult, JiraUploadConfig, JiraInfo, JiraPreview, JiraStatus, JiraUploadBody, JiraUploadForm, JiraWriteResult, Project, Sprint, SprintInput, Issue, IssueInput, Graph, Group, GroupInput, OwnerInput, Module, ModuleInput, Owner, Relation } from './types';
+import { clientId, getName, setEditor } from './editor';
+import type { Editor, JiraCreateFields, JiraImportResult, JiraUploadConfig, JiraInfo, JiraPreview, JiraStatus, JiraUploadBody, JiraUploadForm, JiraWriteResult, Project, Sprint, SprintInput, Issue, IssueInput, Graph, Group, GroupInput, OwnerInput, Module, ModuleInput, Owner, Relation } from './types';
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public extra?: Record<string, unknown>) {
@@ -27,11 +28,14 @@ export function setWriteKey(k: string) {
   window.dispatchEvent(new Event('pjplanner:key'));
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, keepalive = false): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method,
+    keepalive,
     headers: {
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      'x-client': clientId,
+      'x-client-name': encodeURIComponent(getName()),
       ...(writeKey ? { 'x-api-key': writeKey } : {}),
       ...(currentProject !== null ? { 'x-project': String(currentProject) } : {}),
     },
@@ -41,6 +45,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   let data: any = null;
   try { data = await res.json(); } catch { /* non-JSON body */ }
   if (!res.ok) {
+    if (res.status === 409 && data?.error?.extra?.editor !== undefined) setEditor(data.error.extra.editor); // someone else holds (or took over) the editor lease
     if (res.status === 401) window.dispatchEvent(new Event('pjplanner:locked')); // lets the header offer the unlock dialog
     throw new ApiError(res.status, data?.error?.code ?? 'error', data?.error?.message ?? `Request failed (${res.status})`, data?.error?.extra);
   }
@@ -50,6 +55,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
   access: () => request<{ locked: boolean }>('GET', '/access'),
   unlock: () => request<{ ok: boolean }>('POST', '/unlock', {}),
+  claimEditor: (force = false) => request<{ editor: Editor }>('POST', '/editor/claim', { name: getName(), ...(force ? { force: true } : {}) }),
+  editorHeartbeat: () => request<{ editor: Editor }>('POST', '/editor/heartbeat', {}),
+  // `keepalive`: lets the release finish while the page unloads.
+  releaseEditor: (keepalive = false) => request<{ editor: Editor }>('POST', '/editor/release', {}, keepalive),
   listProjects: () => request<Project[]>('GET', '/projects'),
   createProject: (p: { name: string; description?: string }) => request<Project>('POST', '/projects', p),
   updateProject: (id: number, p: { name: string; description?: string; jiraJql?: string | null; jiraLabel?: string | null; jiraWrite?: boolean; jiraEnabled?: boolean; jiraProjectId?: string | null; jiraUploadConfig?: JiraUploadConfig | null }) => request<Project>('PUT', `/projects/${id}`, p),

@@ -20,10 +20,10 @@ describe('api project header', () => {
   it('sends x-project once a project is chosen and remembers it', async () => {
     const f = mockFetch(200, []);
     await api.listIssues();
-    expect(f.mock.calls[0][1].headers).toEqual({});
+    expect(f.mock.calls[0][1].headers['x-project']).toBeUndefined();
     setProjectId(7);
     await api.listIssues();
-    expect(f.mock.calls[1][1].headers).toEqual({ 'x-project': '7' });
+    expect(f.mock.calls[1][1].headers['x-project']).toBe('7');
     expect(getProjectId()).toBe(7);
     expect(localStorage.getItem('pjplanner.project')).toBe('7');
   });

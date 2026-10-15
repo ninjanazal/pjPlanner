@@ -2,6 +2,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import { openDb } from './db/open.js';
 import { registerAuth } from './plugins/auth.js';
 import { registerProjectScope } from './plugins/projectScope.js';
+import { registerEditorLock } from './plugins/editorLock.js';
 import { registerErrorHandler } from './plugins/errors.js';
 import { registerStatic } from './plugins/static.js';
 import { systemRoutes } from './routes/system.js';
@@ -27,6 +28,7 @@ export function buildApp(dbPath: string = process.env.DB_PATH ?? './data/pjplann
 
   registerAuth(app);
   registerProjectScope(app, db);
+  registerEditorLock(app);
   registerErrorHandler(app);
 
   systemRoutes(app);
