@@ -9,7 +9,7 @@ interface Props {
   // When true, closing by Esc / backdrop / X first asks to discard unsaved edits.
   dirty?: boolean;
   role?: 'dialog' | 'alertdialog';
-  size?: 'md' | 'sm';
+  size?: 'md' | 'sm' | 'xl';
   children: ReactNode;
 }
 

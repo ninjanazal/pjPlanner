@@ -54,3 +54,33 @@ export function buildTimeline(tasks: Issue[], modules: Module[], relations: Rela
   const idealLength = Math.max(0, ...lanes.map((l) => open.filter((t) => t.ownerId === l).reduce((n, t) => n + len(t), 0)));
   return { slots, lanes, length, idealLength };
 }
+
+export interface Gap { lane: number | null; start: number; length: number }
+
+// Stretches where an owner sits idle before their next task (waiting on a dependency).
+export function laneGaps(tl: Timeline): Gap[] {
+  const gaps: Gap[] = [];
+  for (const lane of tl.lanes) {
+    let at = 0;
+    for (const s of tl.slots.filter((x) => x.lane === lane).sort((a, b) => a.start - b.start)) {
+      if (s.start > at) gaps.push({ lane, start: at, length: s.start - at });
+      at = s.start + s.length;
+    }
+  }
+  return gaps;
+}
+
+// Tasks that set the finish: walk back from the tasks ending last through whatever ended right when each one started
+// (a dependency or the previous task of the same owner). Shortening any of them shortens the sprint.
+export function criticalPath(tl: Timeline): Set<number> {
+  const crit = new Set<number>();
+  const queue = tl.slots.filter((s) => s.start + s.length === tl.length);
+  while (queue.length) {
+    const s = queue.shift()!;
+    if (crit.has(s.issue.id)) continue;
+    crit.add(s.issue.id);
+    for (const p of tl.slots)
+      if (p.start + p.length === s.start && (s.waitsFor.includes(p.issue.id) || p.lane === s.lane)) queue.push(p);
+  }
+  return crit;
+}
