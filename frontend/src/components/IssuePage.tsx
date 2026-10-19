@@ -96,7 +96,6 @@ export function IssuePage({ issue, issues, sprints, modules, owners, onChanged, 
   const options = parentOptions(issues, f.type, issue.id);
   const parentId = options.some((o) => o.id === f.parentId) ? f.parentId : null;
   const mod = modules.find((m) => m.id === f.moduleId);
-  const moduleOwners = owners.filter((o) => mod?.ownerIds.includes(o.id));
   const owner = owners.find((o) => o.id === f.ownerId);
   const sprint = sprints.find((s) => s.id === issue.sprintId);
   const children = issues.filter((i) => i.parentId === issue.id).sort((a, b) => a.id - b.id);
@@ -266,9 +265,9 @@ export function IssuePage({ issue, issues, sprints, modules, owners, onChanged, 
                 <button type="button" className="chip-remove" aria-label={`Remove owner ${owner.name}`} title="Remove owner" onClick={() => set('ownerId', null)}>×</button>
               </span>
             ) : (
-              <select aria-label="Assign owner" value="" disabled={moduleOwners.length === 0} onChange={(e) => set('ownerId', num(e.target.value))}>
-                <option value="">{f.moduleId == null ? 'Pick a module first' : moduleOwners.length === 0 ? 'This module has no owners' : 'Unassigned'}</option>
-                {moduleOwners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              <select aria-label="Assign owner" value="" disabled={owners.length === 0} onChange={(e) => set('ownerId', num(e.target.value))}>
+                <option value="">{owners.length === 0 ? 'No owners yet' : 'Unassigned'}</option>
+                {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
               </select>
             ))}
             {f.type !== 'epic' && detail('Parent', (
@@ -278,10 +277,7 @@ export function IssuePage({ issue, issues, sprints, modules, owners, onChanged, 
               </select>
             ))}
             {isTask && detail('Module', (
-              <ModulePicker modules={modules} value={f.moduleId} required onChange={(moduleId) => {
-                const keeps = modules.find((m) => m.id === moduleId)?.ownerIds.includes(f.ownerId ?? -1);
-                setDraft({ ...f, moduleId, ownerId: keeps ? f.ownerId : null });
-              }} />
+              <ModulePicker modules={modules} value={f.moduleId} required onChange={(moduleId) => setDraft({ ...f, moduleId })} />
             ))}
             {isTask && detail('Sprint', (
               <select aria-label="Sprint" value={f.sprintId ?? ''} onChange={(e) => set('sprintId', num(e.target.value))}>

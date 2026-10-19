@@ -39,10 +39,33 @@ export function ownerLoads(issues: Issue[], owners: Owner[]): OwnerLoad[] {
     .sort((a, b) => b.remaining - a.remaining || a.owner.name.localeCompare(b.owner.name));
 }
 
+/** Experience: tasks closed per module and person (module id -> owner id -> count). Whoever closed a task, else its assignee, gets the credit. */
+export function moduleExperience(issues: Issue[]): Map<number, Map<number, number>> {
+  const by = new Map<number, Map<number, number>>();
+  for (const i of issues) {
+    const who = i.closedOwnerId ?? i.ownerId;
+    if (!isTask(i) || i.state !== 'closed' || i.moduleId == null || who == null) continue;
+    const m = by.get(i.moduleId) ?? new Map<number, number>();
+    m.set(who, (m.get(who) ?? 0) + 1);
+    by.set(i.moduleId, m);
+  }
+  return by;
+}
+
+/** The people who closed the most tasks in each module (up to `limit`, most first). */
+export function topExperts(issues: Issue[], limit = 2): Map<number, { ownerId: number; closed: number }[]> {
+  const out = new Map<number, { ownerId: number; closed: number }[]>();
+  moduleExperience(issues).forEach((people, moduleId) => {
+    out.set(moduleId, [...people].map(([ownerId, closed]) => ({ ownerId, closed })).sort((a, b) => b.closed - a.closed || a.ownerId - b.ownerId).slice(0, limit));
+  });
+  return out;
+}
+
 export interface OwnerMetrics {
   tally: Tally; avgSteps: number; share: number; rank: number; ownerCount: number; overloaded: boolean;
   activeSprintSteps: number; activeSprintName: string | null;
   perModule: { module: Module; tally: Tally }[];
+  experience: { module: Module; closed: number }[]; // modules where they closed tasks, most first
 }
 
 export function ownerMetrics(issues: Issue[], owners: Owner[], modules: Module[], sprints: Sprint[], ownerId: number): OwnerMetrics {
@@ -60,6 +83,8 @@ export function ownerMetrics(issues: Issue[], owners: Owner[], modules: Module[]
     overloaded: me?.overloaded ?? false,
     activeSprintName: active?.name ?? null,
     activeSprintSteps: active ? mine.filter((i) => i.sprintId === active.id && unfinished(i)).reduce((n, i) => n + stepsOf(i), 0) : 0,
+    experience: modules.map((module) => ({ module, closed: moduleExperience(issues).get(module.id)?.get(ownerId) ?? 0 })).filter((r) => r.closed > 0)
+      .sort((a, b) => b.closed - a.closed || a.module.name.localeCompare(b.module.name)),
     perModule: modules
       .map((module) => ({ module, tally: tally(mine.filter((i) => i.moduleId === module.id)) }))
       .filter((r) => r.tally.tasks > 0)
@@ -74,8 +99,7 @@ export interface ProjectMetrics {
   unassignedOpen: number; backlogOpen: number; unestimatedOpen: number;
   sprints: { sprint: Sprint; tally: Tally }[]; // active first, then planned, then closed
   owners: OwnerLoad[];
-  modules: { module: Module; tally: Tally; ownerCount: number; dependents: number }[];
-  modulesWithoutOwner: Module[];
+  modules: { module: Module; tally: Tally; dependents: number }[];
   epics: { issue: Issue; tally: Tally }[];
 }
 
@@ -97,11 +121,10 @@ export function projectMetrics(issues: Issue[], owners: Owner[], modules: Module
     owners: ownerLoads(issues, owners),
     modules: modules
       .map((module) => ({
-        module, tally: tally(tasks.filter((i) => i.moduleId === module.id)), ownerCount: module.ownerIds.length,
+        module, tally: tally(tasks.filter((i) => i.moduleId === module.id)),
         dependents: relations.filter((r) => r.targetId === module.id).length, // source -> target means source depends on target
       }))
       .sort((a, b) => b.tally.remainingSteps - a.tally.remainingSteps || a.module.name.localeCompare(b.module.name)),
-    modulesWithoutOwner: modules.filter((m) => m.ownerIds.length === 0),
     epics: issues.filter((i) => i.type === 'epic').sort((a, b) => a.id - b.id)
       .map((issue) => { const below = descendantIds(issues, issue.id); return { issue, tally: tally(tasks.filter((i) => below.has(i.id))) }; }),
   };

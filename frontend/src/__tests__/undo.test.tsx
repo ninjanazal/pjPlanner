@@ -8,7 +8,7 @@ vi.mock('../components/GraphView', () => ({
 
 const graph = {
   owners: [], groups: [], relations: [],
-  modules: [{ id: 1, name: 'Alpha', description: '', ownerIds: [], color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: 400, y: 0, groupId: null }],
+  modules: [{ id: 1, name: 'Alpha', description: '', color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: 400, y: 0, groupId: null }],
 };
 let puts: { x: number; y: number }[];
 

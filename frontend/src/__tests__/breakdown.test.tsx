@@ -5,7 +5,7 @@ import { childTypes } from '../issueTree';
 import type { Issue, Module } from '../types';
 
 const mod = (id: number, name: string): Module => ({
-  id, name, description: '', ownerIds: [], color: null, icon: null, apiItems: [],
+  id, name, description: '', color: null, icon: null, apiItems: [],
   textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null,
 });
 const epic: Issue = { id: 7, type: 'epic', title: 'Launch', description: '', parentId: null, ownerId: null, state: 'open', moduleId: null, sprintId: null, childIds: [], rollupModuleIds: [] };

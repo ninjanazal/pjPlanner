@@ -19,6 +19,7 @@ import { DEPENDANT_COLOR, DEPENDS_ON_COLOR, dependencyRoles, edgeRole, edgeView,
 import { ModuleCard, type CardNode } from './ModuleCard';
 
 interface Props {
+  experts?: Map<number, { ownerId: number; closed: number }[]>; // who has closed the most tasks per module
   theme: Theme;
   graph: Graph;
   selected: { kind: 'module' | 'link'; id: number } | null;
@@ -98,7 +99,7 @@ const miniColor = (n: { type?: string; data: Record<string, unknown> }) => {
   return c ?? '#8b9bb4';
 };
 
-export function GraphView({ theme, graph, selected, onNodeClick, onNodeOpen, onLinkClick, onLinkOpen, onPaneClick, onSelectionChange, onConnect, onMove, onMoveMany, onAssignGroup, focusId = null, highlightedModuleIds = null, heat = null, person = null, onAdd, tools = null }: Props) {
+export function GraphView({ theme, graph, selected, onNodeClick, onNodeOpen, onLinkClick, onLinkOpen, onPaneClick, onSelectionChange, onConnect, onMove, onMoveMany, onAssignGroup, focusId = null, highlightedModuleIds = null, heat = null, person = null, experts, onAdd, tools = null }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState<CardNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const auto = useMemo(() => autoLayout(graph), [graph]);
@@ -153,7 +154,7 @@ export function GraphView({ theme, graph, selected, onNodeClick, onNodeOpen, onL
           selected: old.get(id)?.selected ?? false,
           data: {
             name: m.name, color: m.color, icon: m.icon, textColor: m.textColor, strokeColor: m.strokeColor, strokeStyle: m.strokeStyle, apiItems: m.apiItems.map(({ kind, name, signature }) => ({ kind, name, signature })),
-            owners: m.ownerIds.map((o) => ownerName.get(o)).filter((n): n is string => !!n),
+            experts: (experts?.get(m.id) ?? []).map((e) => ownerName.get(e.ownerId)).filter((n): n is string => !!n),
             person: person?.get(m.id) ?? null,
             heat: !person && heat ? (heat.get(m.id) ?? { open: 0, done: 0, level: 0 }) : null,
             testStatus: m.testStatus, usedBy: hubs.get(m.id) ?? 0, tier: cardTier(links.get(m.id) ?? 0),
@@ -161,7 +162,7 @@ export function GraphView({ theme, graph, selected, onNodeClick, onNodeOpen, onL
         };
       });
     });
-  }, [graph, auto, heat, person, hubs, links, setNodes]);
+  }, [graph, auto, heat, person, experts, hubs, links, setNodes]);
 
   const cardRects = useMemo(() => {
     const mod = new Map(graph.modules.map((m) => [String(m.id), m]));

@@ -7,8 +7,8 @@ import type { Graph, Module } from '../types';
 const graph: Graph = {
   owners: [{ id: 1, name: 'Ann', color: '#ff0000', icon: '🧑' }],
   modules: [
-    { id: 1, name: 'Auth', description: 'd', ownerIds: [], color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null },
-    { id: 2, name: 'Billing', description: '', ownerIds: [1], color: '#112233', icon: '🔐', apiItems: [{ id: 5, kind: 'function', name: 'login', signature: 'login(u)', description: '' }], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null },
+    { id: 1, name: 'Auth', description: 'd', color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null },
+    { id: 2, name: 'Billing', description: '', color: '#112233', icon: '🔐', apiItems: [{ id: 5, kind: 'function', name: 'login', signature: 'login(u)', description: '' }], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null },
   ],
   relations: [{ id: 1, sourceId: 1, targetId: 2, label: null, color: null }],
   groups: [{ id: 7, name: 'Core', color: null, icon: '🧱', parentId: null }],
@@ -27,20 +27,18 @@ const mockFetch = (status: number, body?: unknown) => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('ModuleDialog', () => {
-  it('saves edits with PUT including owners', async () => {
+  it('saves edits with PUT', async () => {
     const f = mockFetch(200, { id: 1 });
     const onChanged = vi.fn();
     await renderEdit(graph.modules[0], onChanged);
     const name = screen.getByLabelText('Name');
     await userEvent.clear(name);
     await userEvent.type(name, 'Auth2');
-    await userEvent.click(screen.getByLabelText(/Ann/));
-    expect(screen.getByTestId('owner-swatch')).toBeInTheDocument();
     await userEvent.click(screen.getByText('Save'));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     const [url, init] = f.mock.calls[0];
     expect(url).toBe('/api/modules/1');
-    expect(JSON.parse(init.body)).toMatchObject({ name: 'Auth2', ownerIds: [1] });
+    expect(JSON.parse(init.body)).toMatchObject({ name: 'Auth2' });
   });
 
   it('shows inline API validation error', async () => {

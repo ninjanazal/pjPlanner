@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Modal } from '../components/Modal';
 import { ModuleDialog } from '../components/ModuleDialog';
 import { LinkDialog } from '../components/LinkDialog';
-import type { Graph } from '../types';
+import type { Graph, Issue } from '../types';
 
 function Host({ dirty = false, onClose = () => {} }: { dirty?: boolean; onClose?: () => void }) {
   const [open, setOpen] = useState(true);
@@ -77,7 +77,7 @@ describe('Modal', () => {
   });
 });
 
-const mod = (over = {}) => ({ id: 1, name: 'Auth', description: 'Handles login', ownerIds: [1], color: null, icon: '🔐', apiItems: [{ id: 5, kind: 'endpoint' as const, name: 'login', signature: 'POST /login', description: '' }], textColor: null, strokeColor: null, strokeStyle: 'solid' as const, x: null, y: null, groupId: 7, ...over });
+const mod = (over = {}) => ({ id: 1, name: 'Auth', description: 'Handles login', color: null, icon: '🔐', apiItems: [{ id: 5, kind: 'endpoint' as const, name: 'login', signature: 'POST /login', description: '' }], textColor: null, strokeColor: null, strokeStyle: 'solid' as const, x: null, y: null, groupId: 7, ...over });
 const graph: Graph = {
   owners: [{ id: 1, name: 'Ann', color: '#ff0000', icon: '🧑' }],
   modules: [mod(), mod({ id: 2, name: 'Billing', apiItems: [], groupId: null })],
@@ -86,12 +86,13 @@ const graph: Graph = {
 };
 
 describe('ModuleDialog read vs edit', () => {
-  it('opens read-only with header, group chip, API, owners and description, then switches to edit', async () => {
-    render(<ModuleDialog graph={graph} module={graph.modules[0]} onChanged={() => {}} onClose={() => {}} />);
+  it('opens read-only with header, group chip, API, experience and description, then switches to edit', async () => {
+    const closed = { id: 9, type: 'task', title: 'Fix', description: '', parentId: null, ownerId: 1, state: 'closed', moduleId: 1, sprintId: null, childIds: [], rollupModuleIds: [] } as Issue;
+    render(<ModuleDialog graph={graph} issues={[closed]} module={graph.modules[0]} onChanged={() => {}} onClose={() => {}} />);
     const d = screen.getByRole('dialog', { name: /Auth/ });
     expect(within(d).getByText('Core')).toHaveClass('chip');
     expect(within(d).getByLabelText('API overview')).toBeInTheDocument();
-    expect(within(d).getByText('Ann')).toHaveClass('chip');
+    expect(within(d).getByText(/Ann · 1/)).toHaveClass('chip');
     expect(within(d).getByText('Handles login')).toBeInTheDocument();
     expect(screen.queryByLabelText('Name')).toBeNull();
     await userEvent.click(screen.getByText('Edit'));
@@ -149,7 +150,7 @@ describe('LinkDialog popup', () => {
 
 describe('group chip', () => {
   const m = {
-    id: 1, name: 'Alpha', description: 'saved desc', ownerIds: [], color: null, icon: null, apiItems: [],
+    id: 1, name: 'Alpha', description: 'saved desc', color: null, icon: null, apiItems: [],
     textColor: null, strokeColor: null, strokeStyle: 'solid' as const, x: 5, y: 6, groupId: 1,
   };
   const g: Graph = { owners: [], relations: [], modules: [m], groups: [{ id: 1, name: 'Billing', color: null, icon: null, parentId: null }] };

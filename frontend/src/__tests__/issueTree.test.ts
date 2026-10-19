@@ -1,4 +1,5 @@
-import { buildTree, descendantIds, hideClosed, parentOptions } from '../issueTree';
+import { buildTree, descendantIds, filterTree, hideClosed, parentOptions } from '../issueTree';
+import { NO_FILTER, matchesFilter } from '../issueFilters';
 import type { Issue, IssueType } from '../types';
 
 const mk = (id: number, type: IssueType, parentId: number | null, state: Issue['state'] = 'open'): Issue => ({
@@ -31,5 +32,22 @@ describe('issueTree', () => {
     expect(parentOptions(withStory, 'story').map((i) => i.id)).toEqual([1]);
     expect(parentOptions(withStory, 'task').map((i) => i.id)).toEqual([1, 2, 4, 6]);
     expect(parentOptions(withStory, 'bug').map((i) => i.id)).toEqual([1]);
+  });
+});
+
+describe('filterTree / matchesFilter', () => {
+  const mk = (id: number, o: Partial<Issue> = {}): Issue => ({ id, type: 'task', title: `T${id}`, description: '', parentId: null, ownerId: null, state: 'open', moduleId: null, sprintId: null, childIds: [], rollupModuleIds: [], ...o });
+  const all = [mk(1, { type: 'epic', title: 'Epic' }), mk(2, { type: 'story', parentId: 1 }), mk(3, { parentId: 2, ownerId: 7 }), mk(4, { parentId: 1 })];
+  it('keeps ancestors of a match', () => {
+    const t = filterTree(buildTree(all), (i) => matchesFilter(i, { ...NO_FILTER, ownerId: 7 }, all));
+    expect(t.map((n) => n.issue.id)).toEqual([1]);
+    expect(t[0].children.map((n) => n.issue.id)).toEqual([2]);
+    expect(t[0].children[0].children.map((n) => n.issue.id)).toEqual([3]);
+  });
+  it('matches text, unassigned and epic', () => {
+    expect(matchesFilter(all[2], { ...NO_FILTER, text: '#3' }, all)).toBe(true);
+    expect(matchesFilter(all[2], { ...NO_FILTER, ownerId: 'none' }, all)).toBe(false);
+    expect(matchesFilter(all[3], { ...NO_FILTER, epicId: 1 }, all)).toBe(true);
+    expect(matchesFilter(all[0], { ...NO_FILTER, epicId: 'none' }, all)).toBe(false);
   });
 });

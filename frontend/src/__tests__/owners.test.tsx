@@ -11,13 +11,13 @@ const mkIssue = (p: Partial<Issue> & Pick<Issue, 'id' | 'title'>): Issue => ({
   type: 'task', description: '', parentId: null, ownerId: null, state: 'open', moduleId: null, sprintId: null, childIds: [], rollupModuleIds: [], ...p,
 });
 
-const mod = (id: number, name: string, ownerIds: number[], extra: Partial<Module> = {}): Module => ({
-  id, name, description: '', ownerIds, color: null, icon: null, apiItems: [],
+const mod = (id: number, name: string, extra: Partial<Module> = {}): Module => ({
+  id, name, description: '', color: null, icon: null, apiItems: [],
   textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null, ...extra,
 });
 const graph: Graph = {
   owners: [{ id: 1, name: 'Ann', color: '#ff0000', icon: '🧑' }, { id: 2, name: 'Bob', color: null, icon: null }],
-  modules: [mod(1, 'Auth', [1], { icon: '🔐', color: '#112233' }), mod(2, 'Billing', [1, 2]), mod(3, 'Orphan', [])],
+  modules: [mod(1, 'Auth', { icon: '🔐', color: '#112233' }), mod(2, 'Billing'), mod(3, 'Orphan')],
   relations: [], groups: [],
 };
 const mockFetch = (status: number, body?: unknown) => {
@@ -27,16 +27,21 @@ const mockFetch = (status: number, body?: unknown) => {
 };
 afterEach(() => vi.unstubAllGlobals());
 
+// Experience comes from closed tasks: Ann closed in Auth and Billing, Bob in Billing.
+const history = [
+  mkIssue({ id: 101, title: 'h1', ownerId: 1, moduleId: 1, state: 'closed', closedOwnerId: 1 }),
+  mkIssue({ id: 102, title: 'h2', ownerId: 1, moduleId: 2, state: 'closed', closedOwnerId: 1 }),
+  mkIssue({ id: 103, title: 'h3', ownerId: 2, moduleId: 2, state: 'closed', closedOwnerId: 2 }),
+];
 const page = (ownerRef: number | 'new' | null, extra: Partial<React.ComponentProps<typeof OwnersPage>> = {}) =>
-  render(<OwnersPage graph={graph} ownerRef={ownerRef} onChanged={() => {}} onOpenModule={() => {}} {...extra} />);
+  render(<OwnersPage graph={graph} issues={history} ownerRef={ownerRef} onChanged={() => {}} onOpenModule={() => {}} {...extra} />);
 
 describe('owners list', () => {
-  it('lists owners with module counts, links to their pages and the unassigned hint', () => {
+  it('lists owners with experience counts and links to their pages', () => {
     page(null);
-    expect(within(screen.getByLabelText('Owner Ann')).getByText('2 modules')).toBeInTheDocument();
-    expect(within(screen.getByLabelText('Owner Bob')).getByText('1 module')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Owner Ann')).getByText('experienced in 2 modules')).toBeInTheDocument();
+    expect(within(screen.getByLabelText('Owner Bob')).getByText('experienced in 1 module')).toBeInTheDocument();
     expect(screen.getByLabelText('Owner Ann')).toHaveAttribute('href', '#/owners/1');
-    expect(screen.getByText(/no owner: Orphan/)).toBeInTheDocument();
   });
   it('tiles render icon and colour accent', () => {
     page(null);
@@ -52,7 +57,7 @@ describe('owners list', () => {
 });
 
 describe('owner page', () => {
-  it('shows the owner, their modules and edits in place', async () => {
+  it('shows the owner, their experience and edits in place', async () => {
     const open = vi.fn();
     page(1, { onOpenModule: open });
     expect(screen.getByTestId('entity-head')).toHaveTextContent('🧑');
@@ -120,12 +125,12 @@ describe('owner page', () => {
     await userEvent.click(within(screen.getByRole('alertdialog')).getByText('Discard'));
     expect(window.location.hash).toBe('#/owners');
   });
-  it('delete needs confirmation mentioning unassignment', async () => {
+  it('delete needs confirmation', async () => {
     const f = mockFetch(204);
     const changed = vi.fn();
     page(1, { onChanged: changed });
     await userEvent.click(screen.getByText('Delete owner'));
-    expect(screen.getByRole('alertdialog')).toHaveTextContent(/unassigned from 2 module/);
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(/Their tasks become unassigned/);
     await userEvent.click(within(screen.getByRole('alertdialog')).getByText('Cancel'));
     expect(f).not.toHaveBeenCalled();
     await userEvent.click(screen.getByText('Delete owner'));
@@ -134,9 +139,9 @@ describe('owner page', () => {
     expect(f.mock.calls[0][0]).toBe('/api/owners/1');
     expect(f.mock.calls[0][1].method).toBe('DELETE');
   });
-  it('shows an empty state for an owner without modules', () => {
-    page(2, { graph: { ...graph, modules: [] } });
-    expect(screen.getByText(/No modules assigned/)).toBeInTheDocument();
+  it('shows an empty state for an owner without experience', () => {
+    page(2, { issues: [] });
+    expect(screen.getByText(/No closed tasks in any module yet/)).toBeInTheDocument();
   });
 });
 
@@ -161,7 +166,7 @@ describe('owner list search and sort', () => {
   });
 });
 
-describe('owner statistics and modules', () => {
+describe('owner statistics', () => {
   const sprints = [{ id: 1, name: 'S1', goal: '', state: 'active', issueIds: [], openCount: 0, closedCount: 0 }] as Sprint[];
   const day = 86_400_000;
   const ago = (d: number) => new Date(Date.now() - d * day).toISOString();
@@ -184,32 +189,6 @@ describe('owner statistics and modules', () => {
     expect(screen.queryByText('Done thing')).toBeNull();
     await userEvent.click(screen.getByLabelText('Show closed tasks'));
     expect(screen.getByText('Done thing')).toBeInTheDocument();
-  });
-  it('assigns a module found by fuzzy search, keeping the module description', async () => {
-    const f = mockFetch(200, { id: 1, name: 'Ann', color: null, icon: null });
-    const changed = vi.fn();
-    page(2, { onChanged: changed });
-    await userEvent.type(screen.getByLabelText('Add module'), 'orp');
-    await userEvent.click(screen.getByRole('option', { name: /Orphan/ }));
-    expect(screen.getByLabelText('Open module Orphan')).toBeInTheDocument();
-    await userEvent.click(screen.getByText('Save changes'));
-    await waitFor(() => expect(changed).toHaveBeenCalled());
-    expect(f).toHaveBeenCalledTimes(1);
-    expect(f.mock.calls[0][0]).toBe('/api/modules/3');
-    expect(JSON.parse(f.mock.calls[0][1].body)).toEqual({ name: 'Orphan', description: '', ownerIds: [2] });
-  });
-  it('unassigning a module asks first when it holds their unfinished tasks, then unassigns them', async () => {
-    const f = mockFetch(200, {});
-    page(1, { issues, sprints });
-    await userEvent.click(screen.getByLabelText('Unassign module Billing'));
-    await userEvent.click(screen.getByText('Save changes'));
-    expect(screen.getByRole('alertdialog')).toHaveTextContent(/1 unfinished task/);
-    await userEvent.click(screen.getByText('Save and unassign'));
-    await waitFor(() => expect(f).toHaveBeenCalledTimes(2));
-    expect(f.mock.calls[0][0]).toBe('/api/modules/2');
-    expect(JSON.parse(f.mock.calls[0][1].body).ownerIds).toEqual([2]);
-    expect(f.mock.calls[1][0]).toBe('/api/issues/2');
-    expect(JSON.parse(f.mock.calls[1][1].body).ownerId).toBeNull();
   });
 });
 

@@ -65,7 +65,6 @@ export function ProjectOverview({ project, graph, issues, sprints }: Props) {
         <Kpi label="Open tasks without owner" value={m.unassignedOpen} tone={m.unassignedOpen > 0 ? 'warn' : 'good'} />
         <Kpi label="Open tasks not in a sprint" value={m.backlogOpen} />
         <Kpi label="Open tasks without estimate" value={m.unestimatedOpen} />
-        <Kpi label="Modules without owner" value={m.modulesWithoutOwner.length} tone={m.modulesWithoutOwner.length > 0 ? 'warn' : 'good'} />
         <Kpi label="Overloaded owners" value={overloaded.length} tone={overloaded.length > 0 ? 'warn' : 'good'} />
       </div>
 
@@ -155,10 +154,10 @@ export function ProjectOverview({ project, graph, issues, sprints }: Props) {
         <h3>Module map</h3>
         {graph.modules.length === 0 && <p className="hint">No modules yet.</p>}
         <div className="heat">
-          {m.modules.map(({ module, tally, ownerCount, dependents }) => {
+          {m.modules.map(({ module, tally, dependents }) => {
             const t = tm.modules.find((x) => x.module.id === module.id)!;
             return (
-            <div key={module.id} className={`heat-tile${ownerCount === 0 ? ' orphan' : ''}`}
+            <div key={module.id} className="heat-tile"
               style={{ background: `color-mix(in srgb, var(--primary-border) ${tally.tasks ? Math.max(8, tally.pct) * 0.6 : 0}%, var(--surface))` }}>
               <strong className="heat-name">{module.icon} {module.name}</strong>
               <span className="heat-pct">{tally.tasks ? `${tally.pct}%` : '–'}</span>
@@ -171,7 +170,6 @@ export function ProjectOverview({ project, graph, issues, sprints }: Props) {
                 {t.coldest && <span className="badge cold">coldest</span>}
                 {t.quickest && <span className="badge">fastest</span>}
                 {t.slowest && <span className="badge">slowest</span>}
-                {ownerCount === 0 && <span className="badge warn">no owner</span>}
                 {dependents > 0 && <span className="badge">{dependents} depend{dependents === 1 ? 's' : ''} on it</span>}
               </span>
             </div>

@@ -68,7 +68,7 @@ describe('ColorField saved colours', () => {
 });
 
 const graph: Graph = { owners: [], modules: [], relations: [], groups: [] };
-const mod = { id: 1, name: 'A', description: '', ownerIds: [], color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid' as const, x: null, y: null, groupId: null };
+const mod = { id: 1, name: 'A', description: '', color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid' as const, x: null, y: null, groupId: null };
 
 describe('random icon on create', () => {
   it('ModuleDialog: create pre-fills, edit of icon-less module stays blank, pristine create closes without prompt', async () => {

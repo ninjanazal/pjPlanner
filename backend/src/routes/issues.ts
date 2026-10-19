@@ -105,11 +105,6 @@ export function issueStore(db: Database.Database) {
     const parent = parentId == null ? null : (db.prepare('SELECT * FROM issues WHERE id = ? AND project_id = ?').get(parentId, P()) as any);
     if (parentId != null && !parent) throw notFound('Parent issue');
     if (ownerId != null && !db.prepare('SELECT 1 FROM owners WHERE id = ? AND project_id = ?').get(ownerId, P())) throw notFound('Owner');
-    // A task is only assigned to one of its module's owners, so it needs a module first (unchanged legacy values are tolerated).
-    if (ownerId != null && !(existing && existing.owner_id === ownerId && existing.module_id === moduleId)) {
-      if (moduleId == null) throw bad('set the module before the assignee');
-      if (!db.prepare('SELECT 1 FROM module_owners WHERE module_id = ? AND owner_id = ?').get(moduleId, ownerId)) throw bad('the assignee must be an owner of the task\'s module');
-    }
     if (moduleId != null && !db.prepare('SELECT 1 FROM modules WHERE id = ? AND project_id = ?').get(moduleId, P())) throw notFound('Module');
     if (existing) {
       for (let p = parent; p; p = p.parent_id == null ? null : db.prepare('SELECT * FROM issues WHERE id = ?').get(p.parent_id)) {
@@ -145,15 +140,13 @@ export function issueRoutes(app: FastifyInstance, db: Database.Database) {
     return reply.status(201).send(getIssue(Number(r.lastInsertRowid)));
   });
   app.get('/api/issues/:id', async (req) => getIssue(id((req.params as any).id)));
-  // Picks the best owner for one task with the sprint-balancing rules (it must be an open task in a sprint, with a module that has owners).
+  // Picks the best owner for one task with the sprint-balancing rules (it must be an open task in a sprint).
   app.post('/api/issues/:id/assign', async (req) => {
     const iid = id((req.params as any).id);
     const row = db.prepare('SELECT * FROM issues WHERE id = ? AND project_id = ?').get(iid, P()) as any;
     if (!row) throw notFound('Issue');
     if (row.type !== 'task' || row.state === 'closed') throw bad('only an unfinished task can be assigned');
     if (row.sprint_id == null) throw bad('add the task to a sprint first; owners are balanced within a sprint');
-    if (row.module_id == null) throw bad('set the task\'s module first');
-    if (!db.prepare('SELECT 1 FROM module_owners WHERE module_id = ?').get(row.module_id)) throw bad('the task\'s module has no owners yet');
     if (row.owner_id == null) balanceOwners(row.sprint_id, iid);
     return getIssue(iid);
   });

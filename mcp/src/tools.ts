@@ -162,7 +162,6 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
     {
       name: z.string(),
       description: z.string().optional(),
-      ownerIds: z.array(id).optional(),
       groupId: id.nullable().optional(),
       color: hex,
       icon: hex,
@@ -179,7 +178,6 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
       id,
       name: z.string().optional(),
       description: z.string().optional(),
-      ownerIds: z.array(id).optional(),
       groupId: id.nullable().optional(),
       color: hex,
       icon: hex,
@@ -190,7 +188,7 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
     wrap(async ({ id, ...patch }) => {
       const cur = await api.request<Record<string, unknown>>("GET", `/modules/${id}`);
       const defined = Object.entries(patch).filter(([, v]) => v !== undefined);
-      return api.request("PUT", `/modules/${id}`, { name: cur.name, description: cur.description, ownerIds: cur.ownerIds, ...Object.fromEntries(defined) });
+      return api.request("PUT", `/modules/${id}`, { name: cur.name, description: cur.description, ...Object.fromEntries(defined) });
     }),
   );
   server.tool(
@@ -199,7 +197,7 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
     { moduleId: id, items: z.array(apiItem.omit({ id: true })).min(1) },
     wrap(async ({ moduleId, items }) => {
       const cur = await api.request<Record<string, unknown> & { apiItems: Parameters<typeof mergeApiItems>[0] }>("GET", `/modules/${moduleId}`);
-      return api.request("PUT", `/modules/${moduleId}`, { name: cur.name, description: cur.description, ownerIds: cur.ownerIds, apiItems: mergeApiItems(cur.apiItems, items) });
+      return api.request("PUT", `/modules/${moduleId}`, { name: cur.name, description: cur.description, apiItems: mergeApiItems(cur.apiItems, items) });
     }),
   );
   server.tool(
@@ -208,7 +206,7 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
     { moduleId: id, ids: z.array(id).optional(), names: z.array(z.string()).optional() },
     wrap(async ({ moduleId, ids, names }) => {
       const cur = await api.request<Record<string, unknown> & { apiItems: Parameters<typeof dropApiItems>[0] }>("GET", `/modules/${moduleId}`);
-      return api.request("PUT", `/modules/${moduleId}`, { name: cur.name, description: cur.description, ownerIds: cur.ownerIds, apiItems: dropApiItems(cur.apiItems, ids ?? [], names ?? []) });
+      return api.request("PUT", `/modules/${moduleId}`, { name: cur.name, description: cur.description, apiItems: dropApiItems(cur.apiItems, ids ?? [], names ?? []) });
     }),
   );
   server.tool(
@@ -317,9 +315,15 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
   );
   server.tool(
     "auto_assign_sprint",
-    "Give every unassigned open task of a sprint the best owner from its module's owners (balanced). reset=true first clears the owners of open tasks and re-deals them.",
+    "Give every unassigned open task of a sprint an owner: all tasks of one story or bug go to one person, preferring whoever closed the most tasks in those modules and balancing the workload. reset=true first clears the owners of open tasks and re-deals them with some randomness, so repeating it gives another split.",
     { id, reset: z.boolean().optional() },
-    wrap(({ id, reset }) => api.request("POST", `/sprints/${id}/assign${reset ? "?reset=1" : ""}`)),
+    wrap(({ id, reset }) => api.request("POST", `/sprints/${id}/assign${reset ? "?reset=1&shuffle=1" : ""}`)),
+  );
+  server.tool(
+    "clear_sprint_owners",
+    "Remove the owner from every open (not yet started) task of a sprint, to start the distribution over.",
+    { id },
+    wrap(({ id }) => api.request("POST", `/sprints/${id}/unassign`)),
   );
 
   const del = (name: string, what: string, path: string, note = "") =>

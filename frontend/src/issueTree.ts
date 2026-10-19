@@ -45,3 +45,11 @@ export function parentOptions(issues: Issue[], type: IssueType, selfId?: number 
 // Types that may be created under `type`; empty means it cannot be broken down.
 export const childTypes = (type: IssueType): IssueType[] =>
   (Object.keys(PARENT_TYPES) as IssueType[]).filter((t) => PARENT_TYPES[t].includes(type));
+
+// Keeps matching nodes and the ancestors leading to them, so a hit is shown in context.
+export function filterTree(nodes: IssueNode[], pred: (i: Issue) => boolean): IssueNode[] {
+  return nodes.flatMap((n) => {
+    const children = filterTree(n.children, pred);
+    return pred(n.issue) || children.length > 0 ? [{ issue: n.issue, children }] : [];
+  });
+}

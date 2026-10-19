@@ -104,7 +104,7 @@ describe('api', () => {
 
   it('records when a task started, was closed (and by whom) and reopened', async () => {
     const o = await owner('O');
-    const m = await mod('M', { ownerIds: [o.id] });
+    const m = await mod('M');
     const t = (await call('POST', '/api/issues', { type: 'task', title: 'T', moduleId: m.id, ownerId: o.id })).body;
     expect(t).toMatchObject({ startedAt: null, closedAt: null, reopenCount: 0 });
     const put = (state: string) => call('PUT', `/api/issues/${t.id}`, { type: 'task', title: 'T', moduleId: m.id, ownerId: o.id, state });
@@ -155,74 +155,108 @@ describe('api', () => {
     const sp = (name: string, extra: any = {}) => call('POST', '/api/sprints', { name, ...extra });
     const issue = async (title: string, extra: any = {}) => (await call('POST', '/api/issues', { type: 'task', title, ...extra })).body;
 
-    it('balances unassigned tasks across owners when the sprint starts', async () => {
-      const o = async (n: string) => (await call('POST', '/api/owners', { name: n })).body.id;
-      const [a, b, c] = [await o('A'), await o('B'), await o('C')];
-      const m = (await call('POST', '/api/modules', { name: 'M', ownerIds: [a, b] })).body.id;
+    const mkOwner = async (n: string) => (await call('POST', '/api/owners', { name: n })).body.id;
+    const ownerOf = async (i: any) => (await call('GET', `/api/issues/${i.id}`)).body.ownerId;
+    const story = async (title: string) => (await call('POST', '/api/issues', { type: 'story', title })).body.id;
+
+    it('gives every task of a story to one owner when the sprint starts', async () => {
+      const [a, b] = [await mkOwner('A'), await mkOwner('B')];
+      const m = (await call('POST', '/api/modules', { name: 'M' })).body.id;
       const s = (await sp('S')).body.id;
-      const mine = await issue('keep', { sprintId: s, moduleId: m, ownerId: a });
-      const t = [await issue('t1', { sprintId: s, moduleId: m }), await issue('t2', { sprintId: s, moduleId: m }), await issue('t3', { sprintId: s })];
+      const [s1, s2] = [await story('S1'), await story('S2')];
+      const kept = await issue('keep', { sprintId: s, moduleId: m, ownerId: a });
+      const one = [await issue('a1', { sprintId: s, moduleId: m, parentId: s1 }), await issue('a2', { sprintId: s, parentId: s1 }), await issue('a3', { sprintId: s, moduleId: m, parentId: s1 })];
+      const two = [await issue('b1', { sprintId: s, moduleId: m, parentId: s2 }), await issue('b2', { sprintId: s, moduleId: m, parentId: s2 })];
       const outside = await issue('outside', { moduleId: m });
       expect((await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'active' })).status).toBe(200);
-      const owner = async (i: any) => (await call('GET', `/api/issues/${i.id}`)).body.ownerId;
-      expect(await owner(mine)).toBe(a);
-      expect([await owner(t[0]), await owner(t[1])]).toEqual([a, a]); // module owners only, and the module's tasks stay with one person
-      expect(await owner(t[2])).toBeNull(); // no module: nobody may take it
-      expect(c).toBeGreaterThan(0);
-      expect(await owner(outside)).toBeNull(); // not in the sprint
+      expect(await ownerOf(kept)).toBe(a);
+      const o1 = await Promise.all(one.map(ownerOf)), o2 = await Promise.all(two.map(ownerOf));
+      expect(new Set(o1).size).toBe(1);
+      expect(new Set(o2).size).toBe(1);
+      expect(o1[0]).toBe(b); // A already carries a task, so the first story goes to B
+      expect(await ownerOf(outside)).toBeNull(); // not in the sprint
     });
 
-    it('assigns an owner to a task added to a sprint that is already running', async () => {
-      const a = (await call('POST', '/api/owners', { name: 'A' })).body.id;
-      const b = (await call('POST', '/api/owners', { name: 'B' })).body.id;
-      const m = (await call('POST', '/api/modules', { name: 'M', ownerIds: [a, b] })).body.id;
+    it('follows the owner a story already has, and works without a module', async () => {
+      const [a, b] = [await mkOwner('A'), await mkOwner('B')];
+      const s = (await sp('S')).body.id;
+      const st = await story('S');
+      await issue('done earlier', { parentId: st, ownerId: b, state: 'closed' });
+      await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'active' });
+      const t = await issue('new', { sprintId: s, parentId: st });
+      expect(t.ownerId).toBe(b);
+      expect(a).not.toBe(b);
+    });
+
+    it('assigns a task added to a running sprint, and a deliberate unassign sticks', async () => {
+      const [a, b] = [await mkOwner('A'), await mkOwner('B')];
       const s = (await sp('S')).body.id;
       await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'active' });
-      const t1 = await issue('t1', { sprintId: s, moduleId: m });
-      const t2 = await issue('t2', { sprintId: s, moduleId: m });
+      const st = await story('S');
+      const t1 = await issue('t1', { sprintId: s, parentId: st });
+      const t2 = await issue('t2', { sprintId: s, parentId: st });
       expect([a, b]).toContain(t1.ownerId);
-      expect(t2.ownerId).toBe(t1.ownerId); // same module, same person
-      const t3 = await issue('t3', { moduleId: m });
+      expect(t2.ownerId).toBe(t1.ownerId);
+      const t3 = await issue('t3');
       expect(t3.ownerId).toBeNull();
-      const put = await call('PUT', `/api/issues/${t3.id}`, { type: 'task', title: 't3', moduleId: m, sprintId: s });
+      const put = await call('PUT', `/api/issues/${t3.id}`, { type: 'task', title: 't3', sprintId: s });
       expect([a, b]).toContain(put.body.ownerId);
-      const keep = await call('PUT', `/api/issues/${t1.id}`, { type: 'task', title: 't1', moduleId: m, ownerId: null }); // deliberate unassign sticks
+      const keep = await call('PUT', `/api/issues/${t1.id}`, { type: 'task', title: 't1', parentId: st, ownerId: null });
       expect(keep.body.ownerId).toBeNull();
     });
 
-    it('keeps a module\'s tasks with one owner, then spreads the rest evenly', async () => {
-      const a = (await call('POST', '/api/owners', { name: 'A' })).body.id;
-      const b = (await call('POST', '/api/owners', { name: 'B' })).body.id;
-      const m = (await call('POST', '/api/modules', { name: 'M', ownerIds: [a, b] })).body.id;
+    it('spreads standalone tasks by workload (estimates)', async () => {
+      const [a, b] = [await mkOwner('A'), await mkOwner('B')];
       const s = (await sp('S')).body.id;
-      const ts = [];
-      for (let k = 1; k <= 5; k++) ts.push(await issue(`t${k}`, { sprintId: s, moduleId: m }));
+      const big = await issue('big', { sprintId: s, estimate: 5 });
+      const small = [await issue('s1', { sprintId: s }), await issue('s2', { sprintId: s }), await issue('s3', { sprintId: s })];
       await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'active' });
-      const owners = await Promise.all(ts.map(async (t) => (await call('GET', `/api/issues/${t.id}`)).body.ownerId));
-      expect(owners.slice(0, 3)).toEqual([a, a, a]); // same person for the first three
-      expect(owners.slice(3).every((o) => o === b)).toBe(true); // the rest go to the other owner
+      expect(await ownerOf(big)).toBe(a);
+      expect(await Promise.all(small.map(ownerOf))).toEqual([b, b, b]);
+    });
+
+    it('prefers whoever closed the most tasks in the story\'s modules', async () => {
+      const [a, b] = [await mkOwner('A'), await mkOwner('B')];
+      const m = (await call('POST', '/api/modules', { name: 'M' })).body.id;
+      for (let k = 0; k < 8; k++) await issue(`fix${k}`, { moduleId: m, ownerId: b, state: 'closed' });
+      const s = (await sp('S')).body.id;
+      const t = await issue('next', { sprintId: s, moduleId: m });
+      await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'active' });
+      expect(await ownerOf(t)).toBe(b);
+      expect(a).not.toBe(b);
     });
 
     it('auto-assigns one task or a whole sprint on request', async () => {
-      const a = (await call('POST', '/api/owners', { name: 'A' })).body.id;
-      const m = (await call('POST', '/api/modules', { name: 'M', ownerIds: [a] })).body.id;
-      const bare = (await call('POST', '/api/modules', { name: 'B' })).body.id;
+      const a = await mkOwner('A');
       const s = (await sp('S')).body.id;
-      const t = await issue('t', { sprintId: s, moduleId: m });
-      const u = await issue('u', { sprintId: s, moduleId: m });
-      const noOwners = await issue('n', { sprintId: s, moduleId: bare });
-      const backlog = await issue('b', { moduleId: m });
+      const t = await issue('t', { sprintId: s });
+      const u = await issue('u', { sprintId: s });
+      const backlog = await issue('b');
       expect((await call('POST', `/api/issues/${backlog.id}/assign`)).status).toBe(400); // not in a sprint
-      expect((await call('POST', `/api/issues/${noOwners.id}/assign`)).body.error.message).toMatch(/no owners/);
       expect((await call('POST', `/api/issues/${t.id}/assign`)).body.ownerId).toBe(a);
       expect((await call('GET', `/api/issues/${u.id}`)).body.ownerId).toBeNull(); // only the one asked for
       expect((await call('POST', `/api/sprints/${s}/assign`)).status).toBe(200);
       expect((await call('GET', `/api/issues/${u.id}`)).body.ownerId).toBe(a);
-      // re-assign: clears and deals again; a removed owner no longer holds anything
-      const b = (await call('POST', '/api/owners', { name: 'B' })).body.id;
-      await call('PUT', `/api/modules/${m}`, { name: 'M', ownerIds: [b] });
+      // re-assign: clears and deals again
+      const b = await mkOwner('B');
+      await call('PUT', `/api/issues/${t.id}`, { type: 'task', title: 't', sprintId: s, ownerId: b });
       expect((await call('POST', `/api/sprints/${s}/assign?reset=1`)).status).toBe(200);
-      expect((await call('GET', `/api/issues/${u.id}`)).body.ownerId).toBe(b);
+      expect((await call('GET', `/api/issues/${t.id}`)).body.ownerId).not.toBeNull();
+    });
+
+    it('clears the owners of open tasks, and a shuffled re-deal still gives everyone an owner', async () => {
+      const [a, b] = [await mkOwner('A'), await mkOwner('B')];
+      const s = (await sp('S')).body.id;
+      const ts = [await issue('t1', { sprintId: s }), await issue('t2', { sprintId: s }), await issue('t3', { sprintId: s })];
+      await call('POST', `/api/sprints/${s}/assign`);
+      expect((await Promise.all(ts.map(ownerOf))).every((o) => o === a || o === b)).toBe(true);
+      expect((await call('POST', `/api/sprints/${s}/unassign`)).status).toBe(200);
+      expect(await Promise.all(ts.map(ownerOf))).toEqual([null, null, null]);
+      expect((await call('POST', `/api/sprints/${s}/assign?reset=1&shuffle=1`)).status).toBe(200);
+      expect((await Promise.all(ts.map(ownerOf))).every((o) => o === a || o === b)).toBe(true);
+      await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'active' });
+      await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'closed' });
+      expect((await call('POST', `/api/sprints/${s}/unassign`)).status).toBe(400);
     });
 
     it('keeps bugs and epics out of sprints', async () => {
@@ -286,15 +320,17 @@ describe('api', () => {
     });
   });
 
-  it('module CRUD with defaults and owner replacement', async () => {
+  it('module CRUD with defaults', async () => {
     const o1 = await owner('A', 'a@x.com');
     const o2 = await owner('B', 'b@x.com');
-    const r = await call('POST', '/api/modules', { name: 'M', ownerIds: [o1.id] });
+    const r = await call('POST', '/api/modules', { name: 'M', ownerIds: [o1.id] }); // a legacy ownerIds field is ignored
     expect(r.status).toBe(201);
-    expect(r.body).toMatchObject({ name: 'M', description: '', ownerIds: [o1.id] });
+    expect(r.body).toMatchObject({ name: 'M', description: '' });
+    expect(r.body).not.toHaveProperty('ownerIds');
     expect(r.body).not.toHaveProperty('status');
-    const put = await call('PUT', `/api/modules/${r.body.id}`, { name: 'M2', description: 'd', status: 'done', ownerIds: [o2.id] });
-    expect(put.body).toMatchObject({ name: 'M2', ownerIds: [o2.id] });
+    const put = await call('PUT', `/api/modules/${r.body.id}`, { name: 'M2', description: 'd', status: 'done' });
+    expect(put.body).toMatchObject({ name: 'M2' });
+    expect(o2.id).toBeGreaterThan(0);
     expect(put.body).not.toHaveProperty('status');
     expect((await call('GET', `/api/modules/${r.body.id}`)).status).toBe(200);
     expect((await call('GET', '/api/graph')).body.modules).toHaveLength(1);
@@ -303,9 +339,6 @@ describe('api', () => {
   it('validates modules', async () => {
     expect((await call('POST', '/api/modules', { name: '  ' })).status).toBe(400);
     expect((await call('POST', '/api/modules', { name: 'x', status: 'nope' })).status).toBe(201);
-    const r = await call('POST', '/api/modules', { name: 'x', ownerIds: [99] });
-    expect(r.status).toBe(400);
-    expect(r.body.error.code).toBe('validation_error');
     expect((await call('GET', '/api/modules/99')).status).toBe(404);
     expect((await call('PUT', '/api/modules/99', { name: 'x' })).status).toBe(404);
     expect((await call('DELETE', '/api/modules/99')).status).toBe(404);
@@ -331,7 +364,7 @@ describe('api', () => {
     expect((await call('GET', '/api/graph')).body.owners[0]).toEqual({ id, name: 'a2', color: null, icon: null });
   });
 
-  it('migrates owners with email, keeping ids and module links, idempotently', async () => {
+  it('migrates owners with email, keeping ids, idempotently', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pjp-'));
     const file = path.join(dir, 'old.db');
     const d = new Database(file);
@@ -348,22 +381,22 @@ describe('api', () => {
       const a = buildApp(file);
       const g = (await a.inject({ method: 'GET', url: '/api/graph' })).json();
       expect(g.owners).toEqual([{ id: 1, name: 'One', color: null, icon: null }, { id: 2, name: 'Two', color: null, icon: null }]);
-      expect(g.modules[0].ownerIds).toEqual([1, 2]);
+      expect(g.modules[0]).not.toHaveProperty('ownerIds');
       await a.close();
     }
     const a = buildApp(file);
     expect((await a.inject({ method: 'DELETE', url: '/api/owners/1' })).statusCode).toBe(204);
     const g = (await a.inject({ method: 'GET', url: '/api/graph' })).json();
-    expect(g.modules[0].ownerIds).toEqual([2]);
+    expect(g.owners).toHaveLength(1);
     expect(g.modules).toHaveLength(1);
     await a.close();
   });
 
   it('deleting an owner only unassigns', async () => {
     const o = await owner('A', 'a@x.com');
-    const m = await mod('M', { ownerIds: [o.id] });
+    const t = (await call('POST', '/api/issues', { type: 'task', title: 'T', ownerId: o.id })).body;
     expect((await call('DELETE', `/api/owners/${o.id}`)).status).toBe(204);
-    expect((await call('GET', `/api/modules/${m.id}`)).body.ownerIds).toEqual([]);
+    expect((await call('GET', `/api/issues/${t.id}`)).body.ownerId).toBeNull();
     expect((await call('GET', '/api/owners')).body).toEqual([]);
   });
 
@@ -494,7 +527,7 @@ describe('module visuals and api items', () => {
     for (let round = 0; round < 2; round++) {
       const a = buildApp(file);
       const g = (await a.inject({ method: 'GET', url: '/api/graph' })).json();
-      expect(g.modules[0]).toEqual({ id: 1, name: 'A', description: 'da', ownerIds: [1], color: null, icon: null, textColor: null, strokeColor: null, strokeStyle: 'solid', testStatus: null, testNotes: '', x: null, y: null, groupId: null, apiItems: [] });
+      expect(g.modules[0]).toEqual({ id: 1, name: 'A', description: 'da', color: null, icon: null, textColor: null, strokeColor: null, strokeStyle: 'solid', testStatus: null, testNotes: '', x: null, y: null, groupId: null, apiItems: [] });
       expect(g.modules).toHaveLength(2);
       expect(g.relations).toHaveLength(1);
       if (round === 0) {
@@ -790,11 +823,8 @@ describe('issues', () => {
 
   it('CRUD with defaults and payload shape', async () => {
     const o = await owner('O');
-    const m = await mod('M', { ownerIds: [o.id] });
+    const m = await mod('M');
     expect((await issue('epic', 'E', { ownerId: o.id })).status).toBe(400);
-    const stranger = await owner('X');
-    expect((await issue('task', 'x', { ownerId: o.id })).status).toBe(400); // module first
-    expect((await issue('task', 'x', { ownerId: stranger.id, moduleId: m.id })).status).toBe(400); // must own the module
     expect((await issue('bug', 'B', { moduleId: m.id })).status).toBe(400);
     const r = await issue('task', '  E  ', { ownerId: o.id, moduleId: m.id });
     expect(r.status).toBe(201);
@@ -866,7 +896,7 @@ describe('issues', () => {
     const b = await mk('bug', 'B', { parentId: e.id });
     expect((await issue('story', 'S3', { parentId: b.id })).status).toBe(400); // not under a bug
     expect((await issue('epic', 'E2', { parentId: st.body.id })).status).toBe(400);
-    const o = await owner('O'); const m = await mod('M', { ownerIds: [o.id] });
+    const o = await owner('O'); const m = await mod('M');
     expect((await issue('story', 'x', { moduleId: m.id })).body.error.message).toBe('a story cannot have an assignee or a module; set them on its tasks');
     const sp = (await call('POST', '/api/sprints', { name: 'S' })).body;
     expect((await issue('story', 'x', { sprintId: sp.id })).status).toBe(400);
@@ -933,7 +963,7 @@ describe('issues', () => {
   });
 
   it('module delete nulls moduleId, owner delete nulls assignee', async () => {
-    const o = await owner('O'); const m = await mod('M', { ownerIds: [o.id] });
+    const o = await owner('O'); const m = await mod('M');
     const t = await mk('task', 'T', { moduleId: m.id, ownerId: o.id });
     await call('DELETE', `/api/modules/${m.id}`);
     await call('DELETE', `/api/owners/${o.id}`);
@@ -1052,7 +1082,7 @@ describe('projects', () => {
     expect((await call('POST', '/api/owners', { name: 'Same' })).status).toBe(201);
     expect((await inP(p2, 'POST', '/api/owners', { name: 'Same' })).status).toBe(201);
     const o1 = (await call('GET', '/api/owners')).body[0].id;
-    expect((await inP(p2, 'POST', '/api/modules', { name: 'X', ownerIds: [o1] })).status).toBe(400);
+    expect((await inP(p2, 'POST', '/api/issues', { type: 'task', title: 'X', moduleId: m.id, ownerId: o1 })).status).toBe(404); // another project's owner
     expect((await inP(p2, 'POST', '/api/issues', { type: 'task', title: 't', moduleId: 1 })).status).toBe(404);
     expect((await call('GET', '/api/modules', undefined)).status).toBe(200);
     expect((await inP(999, 'GET', '/api/modules')).status).toBe(404);
@@ -1075,7 +1105,7 @@ describe('projects', () => {
     const o = (await call('POST', '/api/owners', { name: 'Ann', color: '#112233' })).body;
     const g = (await call('POST', '/api/groups', { name: 'Core' })).body;
     const g2 = (await call('POST', '/api/groups', { name: 'Sub', parentId: g.id })).body;
-    const a = await mod('A', { ownerIds: [o.id], groupId: g2.id, color: '#ff0000', apiItems: [{ kind: 'function', name: 'f', signature: 'f()', description: '' }] });
+    const a = await mod('A', { groupId: g2.id, color: '#ff0000', apiItems: [{ kind: 'function', name: 'f', signature: 'f()', description: '' }] });
     const b = await mod('B');
     await call('PUT', `/api/modules/${a.id}/position`, { x: 10, y: 20 });
     await call('POST', '/api/relations', { sourceId: a.id, targetId: b.id, label: 'uses', color: '#00ff00' });
@@ -1102,7 +1132,8 @@ describe('projects', () => {
       expect(A).toMatchObject({ color: '#ff0000', x: 10, y: 20 });
       expect(A.apiItems).toHaveLength(1);
       const owners = await get('/api/owners');
-      expect(A.ownerIds).toEqual([owners[0].id]);
+      expect(A).not.toHaveProperty('ownerIds');
+      expect(owners).toHaveLength(1);
       const groups = await get('/api/groups');
       expect(groups.find((x: any) => x.name === 'Sub').parentId).toBe(groups.find((x: any) => x.name === 'Core').id);
       expect(A.groupId).toBe(groups.find((x: any) => x.name === 'Sub').id);
@@ -1125,7 +1156,6 @@ describe('projects', () => {
       { format: 'pjplanner-project', version: 1, project: { name: 'x' }, issues: [{ id: 1, type: 'task', title: 't', parentId: 1 }] },
       { format: 'pjplanner-project', version: 1, project: { name: 'x' }, sprints: [{ id: 1, name: 'a', state: 'active' }, { id: 2, name: 'b', state: 'active' }] },
     ];
-    bads.push({ format: 'pjplanner-project', version: 1, project: { name: 'x' }, modules: [{ id: 1, name: 'M', ownerIds: [null] }] });
     for (const payload of bads) expect((await call('POST', '/api/projects/import', payload)).status).toBe(400);
     expect((await call('GET', '/api/projects')).body).toHaveLength(1);
   });
@@ -1184,7 +1214,7 @@ describe('issue workflow states', () => {
 
   it('a re-deal keeps the owner of a task already in review', async () => {
     const o = await owner('Ann');
-    const m = await mod('M', { ownerIds: [o.id] });
+    const m = await mod('M');
     const s = (await call('POST', '/api/sprints', { name: 'S' })).body;
     const inReview = await task('r', { sprintId: s.id, moduleId: m.id, ownerId: o.id, state: 'code_review' });
     const plain = await task('p', { sprintId: s.id, moduleId: m.id, ownerId: o.id });
@@ -1195,7 +1225,7 @@ describe('issue workflow states', () => {
 
   it('only a closed task cannot be auto-assigned', async () => {
     const o = await owner('Ann');
-    const m = await mod('M', { ownerIds: [o.id] });
+    const m = await mod('M');
     const s = (await call('POST', '/api/sprints', { name: 'S' })).body;
     const t = await task('t', { sprintId: s.id, moduleId: m.id, state: 'test_validation' });
     expect((await call('POST', `/api/issues/${t.id}/assign`)).status).toBe(200);

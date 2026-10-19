@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import App from '../App';
 
 const mod = (id: number, name: string, over: object = {}) => ({
-  id, name, description: '', ownerIds: [], color: null, icon: null, apiItems: [],
+  id, name, description: '', color: null, icon: null, apiItems: [],
   textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null, ...over,
 });
 const base = {

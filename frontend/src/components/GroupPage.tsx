@@ -65,7 +65,6 @@ export function GroupPage({ group, graph, issues, onChanged, onOpenModule }: Pro
   const tests = { full: 0, partial: 0, none: 0, unknown: 0 };
   all.forEach((m) => { tests[m.testStatus ?? 'unknown']++; });
   const open = tasks.filter((i) => i.state !== 'closed').sort((a, b) => a.id - b.id);
-  const unowned = all.filter((m) => m.ownerIds.length === 0).length;
 
   const save = async () => {
     if (!draft || !draft.name.trim()) return;
@@ -76,7 +75,7 @@ export function GroupPage({ group, graph, issues, onChanged, onOpenModule }: Pro
       for (const id of [...added, ...removed]) {
         const m = graph.modules.find((x) => x.id === id)!;
         // A module sits in one group, so adding it here moves it out of its old one. Omitted fields stay as they are.
-        await api.updateModule(id, { name: m.name, description: m.description, ownerIds: m.ownerIds, groupId: added.includes(id) ? saved.id : null });
+        await api.updateModule(id, { name: m.name, description: m.description, groupId: added.includes(id) ? saved.id : null });
       }
       flushSync(() => setDraft(null));
       if (!group) window.location.hash = groupHash(saved.id);
@@ -125,7 +124,6 @@ export function GroupPage({ group, graph, issues, onChanged, onOpenModule }: Pro
                 <Kpi label="Modules" value={all.length} hint={all.length > base.moduleIds.length ? `${base.moduleIds.length} directly` : undefined} />
                 <Kpi label="Sub-groups" value={children.length} />
                 <Kpi label="Steps left" value={t.remainingSteps} />
-                <Kpi label="Without owner" value={unowned} tone={unowned > 0 ? 'warn' : 'good'} hint="modules" />
                 <Kpi label="Fully tested" value={`${tests.full}/${all.length}`} hint={tests.none > 0 ? `${tests.none} without tests` : undefined} tone={tests.none > 0 ? 'warn' : undefined} />
               </div>
 

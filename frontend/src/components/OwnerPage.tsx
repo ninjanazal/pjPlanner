@@ -18,23 +18,22 @@ interface Props {
   owner: Owner | null; graph: Graph; issues: Issue[]; sprints: Sprint[]; onChanged: () => void; onOpenModule: (id: number) => void;
 }
 
-interface Form { name: string; color: string | null; icon: string | null; moduleIds: number[] }
+interface Form { name: string; color: string | null; icon: string | null }
 
 const isOpen = (i: Issue) => i.state !== 'closed';
 const steps = (i: Issue) => i.estimate ?? 1;
 const chip = (c: string | null) => ({ '--chip-c': c ?? 'var(--border)' } as React.CSSProperties);
-const sameForm = (a: Form, b: Form) => JSON.stringify({ ...a, moduleIds: [...a.moduleIds].sort() }) === JSON.stringify({ ...b, moduleIds: [...b.moduleIds].sort() });
+const sameForm = (a: Form, b: Form) => JSON.stringify(a) === JSON.stringify(b);
 
 // `#/owners/<id>`: one owner's page. Statistics on the left, details (name, look, modules) on the right, all edited in
 // place and saved or discarded together. `owner` is null on `#/owners/new`.
 export function OwnerPage({ owner, graph, issues, sprints, onChanged, onOpenModule }: Props) {
   const base: Form = useMemo(() => ({
     name: owner?.name ?? '', color: owner?.color ?? null, icon: owner ? owner.icon : randomIcon(),
-    moduleIds: owner ? graph.modules.filter((m) => m.ownerIds.includes(owner.id)).map((m) => m.id) : [],
-  }), [owner, graph.modules]);
+  }), [owner]);
   const [draft, setDraft] = useState<Form | null>(null);
   const [showClosed, setShowClosed] = useState(false);
-  const [confirm, setConfirm] = useState<'delete' | 'unassign' | string | null>(null); // a string is a hash waiting for "discard?"
+  const [confirm, setConfirm] = useState<'delete' | string | null>(null); // a string is a hash waiting for "discard?"
   const { error, run } = useAction(true);
   const f = draft ?? base;
   const dirty = draft != null && (owner == null || !sameForm(draft, base));
@@ -54,12 +53,7 @@ export function OwnerPage({ owner, graph, issues, sprints, onChanged, onOpenModu
   const link = (hash: string) => ({ href: hash, onClick: (e: React.MouseEvent) => { e.preventDefault(); go(hash); } });
   const leave = (hash: string) => { flushSync(() => { setDraft(null); setConfirm(null); }); window.location.hash = hash; };
 
-  const mods = f.moduleIds.map((id) => graph.modules.find((m) => m.id === id)).filter((m): m is Module => Boolean(m));
-  const removed = base.moduleIds.filter((id) => !f.moduleIds.includes(id));
-  const added = f.moduleIds.filter((id) => !base.moduleIds.includes(id));
   const mine = owner ? issues.filter((i) => i.type === 'task' && i.ownerId === owner.id) : [];
-  // Unfinished tasks in a module they leave would break "the assignee owns the module", so they get unassigned.
-  const orphaned = mine.filter((i) => isOpen(i) && i.moduleId != null && removed.includes(i.moduleId));
 
   const stats = owner ? ownerMetrics(issues, graph.owners, graph.modules, sprints, owner.id) : null;
   const time = useMemo(() => (owner ? timeMetrics(issues, graph.owners, graph.modules) : null), [owner, issues, graph.owners, graph.modules]);
@@ -82,19 +76,12 @@ export function OwnerPage({ owner, graph, issues, sprints, onChanged, onOpenModu
     await run(async () => {
       const look = { name: draft.name, color: draft.color, icon: draft.icon };
       const saved = owner ? (owner.name !== look.name || owner.color !== look.color || owner.icon !== look.icon ? await api.updateOwner(owner.id, look) : owner) : await api.createOwner(look);
-      for (const id of [...added, ...removed]) {
-        const m = graph.modules.find((x) => x.id === id)!;
-        const ownerIds = added.includes(id) ? [...m.ownerIds, saved.id] : m.ownerIds.filter((x) => x !== saved.id);
-        // PUT resets an omitted description/ownerIds, so both are sent; the rest of the module is left alone.
-        await api.updateModule(id, { name: m.name, description: m.description, ownerIds });
-      }
-      for (const i of orphaned) await api.updateIssue(i.id, withOwner(i, null));
       flushSync(() => setDraft(null));
       if (!owner) window.location.hash = ownerHash(saved.id);
       onChanged();
     }, 'Owner saved');
   };
-  saveRef.current = () => { if (dirty && f.name.trim()) { if (orphaned.length > 0) setConfirm('unassign'); else void save(); } };
+  saveRef.current = () => { if (dirty && f.name.trim()) void save(); };
   const del = async () => {
     setConfirm(null);
     if (owner && (await run(() => api.deleteOwner(owner.id), 'Owner deleted'))) { flushSync(() => setDraft(null)); window.location.hash = '#/owners'; onChanged(); }
@@ -193,21 +180,21 @@ export function OwnerPage({ owner, graph, issues, sprints, onChanged, onOpenModu
             <h3>Details</h3>
             <div className="detail stack"><span className="detail-label">Colour</span><div className="detail-value"><ColorField value={f.color} onChange={(c) => set('color', c)} /></div></div>
             <div className="detail stack"><span className="detail-label">Icon</span><div className="detail-value"><IconField value={f.icon} onChange={(i) => set('icon', i)} /></div></div>
-            <div className="detail stack"><span className="detail-label">Modules ({mods.length})</span>
-              <div className="detail-value">
-                {mods.length === 0 && <p className="hint">No modules assigned. Add one below.</p>}
-                <div className="row wrap">
-                  {mods.map((m) => (
-                    <span key={m.id} className="chip chip-x" style={chip(m.color)}>
-                      <button type="button" className="chip-link" aria-label={`Open module ${m.name}`} onClick={() => onOpenModule(m.id)}>{m.icon} {m.name}</button>
-                      <button type="button" className="chip-remove" aria-label={`Unassign module ${m.name}`} title="Unassign" onClick={() => set('moduleIds', f.moduleIds.filter((x) => x !== m.id))}>×</button>
-                    </span>
-                  ))}
+            {owner && (
+              <div className="detail stack"><span className="detail-label">Experience ({stats?.experience.length ?? 0})</span>
+                <div className="detail-value">
+                  {(stats?.experience.length ?? 0) === 0 && <p className="hint">No closed tasks in any module yet.</p>}
+                  <div className="row wrap">
+                    {stats?.experience.map(({ module: m, closed }) => (
+                      <span key={m.id} className="chip" style={chip(m.color)} title={`${closed} task${closed === 1 ? '' : 's'} closed in ${m.name}`}>
+                        <button type="button" className="chip-link" aria-label={`Open module ${m.name}`} onClick={() => onOpenModule(m.id)}>{m.icon} {m.name} · {closed}</button>
+                      </span>
+                    ))}
+                  </div>
+                  <small className="hint">The more tasks someone closed in a module, the more likely auto-assign picks them for it.</small>
                 </div>
-                <ModulePicker label="Add module" placeholder="Add a module…" modules={graph.modules.filter((m) => !f.moduleIds.includes(m.id))} value={null} required
-                  onChange={(id) => { if (id != null) set('moduleIds', [...f.moduleIds, id]); }} />
               </div>
-            </div>
+            )}
           </div>
           {owner && <button type="button" className="ghost-danger" onClick={() => setConfirm('delete')}>Delete owner</button>}
         </aside>
@@ -223,12 +210,7 @@ export function OwnerPage({ owner, graph, issues, sprints, onChanged, onOpenModu
       )}
 
       {confirm === 'delete' && owner && (
-        <ConfirmDialog message={`Delete owner "${owner.name}"? They will be unassigned from ${base.moduleIds.length} module(s); the modules are kept.`} onConfirm={del} onCancel={() => setConfirm(null)} />
-      )}
-      {confirm === 'unassign' && owner && (
-        <ConfirmDialog title="Unassign tasks?" confirmLabel="Save and unassign" cancelLabel="Keep editing"
-          message={`${owner.name} will leave ${removed.length === 1 ? 'a module' : `${removed.length} modules`} that still ${orphaned.length === 1 ? 'has 1 unfinished task' : `have ${orphaned.length} unfinished tasks`} assigned to them. Those tasks become unassigned.`}
-          onConfirm={() => void save()} onCancel={() => setConfirm(null)} />
+        <ConfirmDialog message={`Delete owner "${owner.name}"? Their tasks become unassigned.`} onConfirm={del} onCancel={() => setConfirm(null)} />
       )}
       {typeof confirm === 'string' && confirm.startsWith('#') && (
         <ConfirmDialog title="Discard changes?" message="You have unsaved edits. Leaving now will discard them." confirmLabel="Discard" cancelLabel="Keep editing"

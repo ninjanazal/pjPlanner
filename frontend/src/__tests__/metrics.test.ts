@@ -1,11 +1,11 @@
-import { ownerLoads, ownerMetrics, projectMetrics, tally } from '../metrics';
+import { moduleExperience, ownerLoads, ownerMetrics, projectMetrics, tally, topExperts } from '../metrics';
 import type { Issue, Module, Owner, Relation, Sprint } from '../types';
 
 const t = (id: number, p: Partial<Issue> = {}): Issue => ({
   id, type: 'task', title: `T${id}`, description: '', parentId: null, ownerId: null, state: 'open', moduleId: null, sprintId: null, childIds: [], rollupModuleIds: [], ...p,
 });
 const mod = (id: number, ownerIds: number[] = []): Module => ({
-  id, name: `M${id}`, description: '', ownerIds, color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null,
+  id, name: `M${id}`, description: '', color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null,
 });
 const o = (id: number): Owner => ({ id, name: `O${id}`, color: null, icon: null });
 const sp = (id: number, state: Sprint['state']): Sprint => ({ id, name: `S${id}`, goal: '', state, issueIds: [], openCount: 0, closedCount: 0 });
@@ -55,12 +55,28 @@ describe('projectMetrics', () => {
     expect(m).toMatchObject({ inFlight: 1, unassignedOpen: 1, backlogOpen: 1, unestimatedOpen: 2 });
     expect(m.byType.bug).toEqual({ total: 1, closed: 0 });
   });
-  it('orders sprints active first and reports module dependents and owner gaps', () => {
+  it('orders sprints active first and reports module dependents', () => {
     expect(m.sprints.map((s) => s.sprint.id)).toEqual([1, 2]);
     expect(m.modules.find((x) => x.module.id === 1)!.dependents).toBe(1);
-    expect(m.modulesWithoutOwner.map((x) => x.id)).toEqual([2]);
   });
   it('rolls an epic up through its story to the tasks below', () => {
     expect(m.epics[0].tally).toMatchObject({ tasks: 2, closed: 1, pct: 67 });
+  });
+});
+
+describe('module experience', () => {
+  const done = (id: number, moduleId: number, ownerId: number | null, closedOwnerId?: number): Issue =>
+    ({ id, type: 'task', title: `d${id}`, description: '', parentId: null, ownerId, state: 'closed', moduleId, sprintId: null, childIds: [], rollupModuleIds: [], closedOwnerId } as Issue);
+  const issues = [done(1, 1, 1), done(2, 1, 1), done(3, 1, 2, 2), done(4, 1, 1, 2), done(5, 2, 2), done(6, 3, null)];
+  it('credits whoever closed a task, else its assignee', () => {
+    const e = moduleExperience(issues);
+    expect(e.get(1)!.get(1)).toBe(2);
+    expect(e.get(1)!.get(2)).toBe(2);
+    expect(e.get(2)!.get(2)).toBe(1);
+    expect(e.has(3)).toBe(false);
+  });
+  it('lists the top experts per module, ties to the lowest id', () => {
+    expect(topExperts(issues, 1).get(1)).toEqual([{ ownerId: 1, closed: 2 }]);
+    expect(topExperts(issues).get(1)!.map((x) => x.ownerId)).toEqual([1, 2]);
   });
 });

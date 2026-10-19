@@ -13,7 +13,7 @@ import { projectStore } from './projects.js';
 export function projectTransferRoutes(app: FastifyInstance, db: Database.Database) {
   const { ownerList } = ownerStore(db);
   const { groupList, checkParent } = groupStore(db);
-  const { modules, parseExtras, setItems, setOwners } = moduleStore(db);
+  const { modules, parseExtras, setItems } = moduleStore(db);
   const { relList } = relationStore(db);
   const { getProject, freeProjectName } = projectStore(db);
   // Export: one self-contained JSON file. Ids in the file are only labels for cross references; import remaps them.
@@ -93,11 +93,6 @@ export function projectTransferRoutes(app: FastifyInstance, db: Database.Databas
             ref(groupMap, m.groupId, `modules[${m.id}].groupId`), p.testStatus ?? null, p.testNotes ?? '').lastInsertRowid);
           modMap.set(m.id as number, mid);
           setItems(mid, (p.apiItems ?? []).map(({ id: _i, ...it }) => it));
-          const oids = Array.isArray(m.ownerIds) ? m.ownerIds : [];
-          setOwners(mid, [...new Set(oids.map((o) => {
-            if (o === null || o === undefined) throw bad(`modules[${m.id}].ownerIds refers to an unknown id ${String(o)}`);
-            return ref(ownerMap, o, `modules[${m.id}].ownerIds`)!;
-          }))]);
         }
         const rins = db.prepare('INSERT INTO relations (source_id, target_id, label, color) VALUES (?, ?, ?, ?)');
         const seen = new Set<string>();

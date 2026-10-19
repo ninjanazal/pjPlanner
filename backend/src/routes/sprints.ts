@@ -4,6 +4,7 @@ import { HttpError, bad, notFound } from '../errors.js';
 import { P } from '../context.js';
 import { Body, obj, str, id } from '../validation.js';
 export const SPRINT_STATES = ['planned', 'active', 'closed'];
+const EXPERIENCE_BONUS = 4, EXPERIENCE_HALF = 5; // bonus = BONUS * n / (n + HALF) for n closed tasks
 
 export function sprintStore(db: Database.Database) {
   const sprintPayloads = (rows: any[]) => {
@@ -43,38 +44,44 @@ export function sprintStore(db: Database.Database) {
     return { name, goal: (b.goal as string | undefined) ?? existing?.goal ?? '', state };
   };
   // Gives every unassigned open task of a sprint an owner, balancing the team. Rules:
-  //  1. only the task's own module owners may take it (no module / no owners: left alone);
-  //  2. least-loaded owner wins, counting what each already carries in this sprint;
-  //  3. continuity: whoever already holds a task of the same module counts as 2 lighter, so a module's tasks tend to stay
-  //     with one person (about 3 in a row), and a task under the same epic/bug counts as 0.5 lighter;
-  //  4. fairness cap: nobody goes above the sprint average (rounded up) + 1 while someone else in the pool is below it;
-  //  5. narrowest choices are placed first, ties go to the lowest owner id, existing assignments are never moved.
-  const balanceOwners = (sid: number, onlyId?: number) => {
-    const rows = db.prepare("SELECT id, owner_id, module_id, parent_id FROM issues WHERE sprint_id = ? AND type = 'task' AND state <> 'closed' ORDER BY id").all(sid) as any[];
-    const ofModule = new Map<number, number[]>();
-    for (const r of db.prepare('SELECT module_id, owner_id FROM module_owners ORDER BY owner_id').all() as any[]) ofModule.set(r.module_id, [...(ofModule.get(r.module_id) ?? []), r.owner_id]);
-    const pool = (r: any): number[] => (r.module_id == null ? [] : (ofModule.get(r.module_id) ?? []));
-    const todo = rows.filter((r) => r.owner_id == null && pool(r).length > 0 && (onlyId == null || r.id === onlyId));
-    if (todo.length === 0) return;
-    const people = new Set(rows.flatMap((r) => (r.owner_id != null ? [r.owner_id] : pool(r))));
-    const cap = Math.ceil(rows.length / people.size) + 1;
-    const load = new Map<number, number>();
-    const inModule = new Map<string, number>(); // owner:module -> tasks held
-    const inParent = new Map<string, number>(); // owner:parent -> tasks held
-    const note = (o: number, r: any) => {
-      load.set(o, (load.get(o) ?? 0) + 1);
-      if (r.module_id != null) inModule.set(`${o}:${r.module_id}`, (inModule.get(`${o}:${r.module_id}`) ?? 0) + 1);
-      if (r.parent_id != null) inParent.set(`${o}:${r.parent_id}`, (inParent.get(`${o}:${r.parent_id}`) ?? 0) + 1);
+  //  1. tasks under the same story or bug form one unit and go to one person; any other task is a unit of its own;
+  //  2. if a task of the unit already has an owner (in any sprint), the rest of the unit follows that owner;
+  //  3. otherwise the owner with the best score wins: the work already carried in this sprint (sum of task estimates, 1 step
+  //     when unset) minus an experience bonus, i.e. the tasks that owner closed before in the unit's modules (saturating,
+  //     worth at most EXPERIENCE_BONUS steps, so a veteran is favoured but never buried);
+  //  4. the biggest units are placed first, ties go to the lowest owner id, existing assignments are never moved;
+  //  5. `shuffle` adds a little randomness to the order and the scores, so asking again gives another (still balanced) split.
+  const balanceOwners = (sid: number, onlyId?: number, shuffle = false) => {
+    const people = (db.prepare('SELECT id FROM owners WHERE project_id = ? ORDER BY id').all(P()) as { id: number }[]).map((o) => o.id);
+    if (people.length === 0) return;
+    const rows = db.prepare("SELECT id, owner_id, parent_id, module_id, estimate FROM issues WHERE sprint_id = ? AND type = 'task' AND state <> 'closed' ORDER BY id").all(sid) as any[];
+    const groupParent = db.prepare("SELECT 1 FROM issues WHERE id = ? AND type IN ('story', 'bug')");
+    const unitOf = (r: any) => (r.parent_id != null && groupParent.get(r.parent_id) ? `p${r.parent_id}` : `t${r.id}`);
+    const weight = (r: any) => r.estimate ?? 1;
+    const load = new Map<number, number>(people.map((o) => [o, 0]));
+    for (const r of rows) if (r.owner_id != null) load.set(r.owner_id, (load.get(r.owner_id) ?? 0) + weight(r));
+
+    // closed tasks per owner and module: who has fixed things in a module before
+    const done = new Map<string, number>();
+    for (const r of db.prepare("SELECT COALESCE(closed_owner_id, owner_id) AS o, module_id AS m, COUNT(*) AS n FROM issues WHERE project_id = ? AND type = 'task' AND state = 'closed' AND COALESCE(closed_owner_id, owner_id) IS NOT NULL AND module_id IS NOT NULL GROUP BY o, m").all(P()) as any[]) done.set(`${r.o}:${r.m}`, r.n);
+    const bonus = (o: number, u: any[]) => {
+      const n = [...new Set(u.map((r) => r.module_id).filter((m) => m != null))].reduce((t, m) => t + (done.get(`${o}:${m}`) ?? 0), 0);
+      return (EXPERIENCE_BONUS * n) / (n + EXPERIENCE_HALF);
     };
-    rows.forEach((r) => { if (r.owner_id != null) note(r.owner_id, r); });
-    const score = (o: number, r: any) => (load.get(o) ?? 0) - (inModule.get(`${o}:${r.module_id}`) ? 2 : 0) - (r.parent_id != null && inParent.get(`${o}:${r.parent_id}`) ? 0.5 : 0);
+    const units = new Map<string, any[]>();
+    for (const r of rows) units.set(unitOf(r), [...(units.get(unitOf(r)) ?? []), r]);
+    const heldBy = db.prepare("SELECT owner_id, COUNT(*) AS n FROM issues WHERE parent_id = ? AND type = 'task' AND state <> 'closed' AND owner_id IS NOT NULL GROUP BY owner_id ORDER BY n DESC, owner_id");
     const set = db.prepare('UPDATE issues SET owner_id = ? WHERE id = ?');
-    todo.sort((a, b) => pool(a).length - pool(b).length || (a.module_id ?? 0) - (b.module_id ?? 0) || a.id - b.id).forEach((r) => {
-      const open = pool(r).filter((o) => (load.get(o) ?? 0) < cap);
-      const pick = [...(open.length ? open : pool(r))].sort((x, y) => score(x, r) - score(y, r) || x - y)[0];
-      note(pick, r);
-      set.run(pick, r.id);
-    });
+    const todo = [...units.entries()]
+      .map(([key, members]) => ({ key, members, open: members.filter((r) => r.owner_id == null && (onlyId == null || r.id === onlyId)), tie: shuffle ? Math.random() : 0 }))
+      .filter((u) => u.open.length > 0)
+      .sort((a, b) => b.open.reduce((n, r) => n + weight(r), 0) - a.open.reduce((n, r) => n + weight(r), 0) || a.tie - b.tie || a.open[0].id - b.open[0].id);
+    for (const u of todo) {
+      const jitter = new Map(people.map((o) => [o, shuffle ? Math.random() * 1.5 : 0]));
+      const follow = u.key.startsWith('p') ? (heldBy.all(Number(u.key.slice(1))) as { owner_id: number }[]).map((h) => h.owner_id).find((o) => load.has(o)) : undefined;
+      const pick = follow ?? [...people].sort((x, y) => load.get(x)! - bonus(x, u.members) + jitter.get(x)! - (load.get(y)! - bonus(y, u.members) + jitter.get(y)!) || x - y)[0];
+      for (const r of u.open) { set.run(pick, r.id); load.set(pick, load.get(pick)! + weight(r)); }
+    }
   };
   return { sprintPayloads, getSprint, parseSprint, balanceOwners };
 }
@@ -94,12 +101,19 @@ export function sprintRoutes(app: FastifyInstance, db: Database.Database) {
   app.post('/api/sprints/:id/assign', async (req) => {
     const sid = id((req.params as any).id);
     getSprint(sid);
-    // ?reset=1 starts over: open tasks whose module has owners are cleared first, so everything is dealt out afresh.
+    // ?reset=1 starts over: open tasks are cleared first, so everything is dealt out afresh.
     if ((req.query as any)?.reset === '1') {
-      db.prepare(`UPDATE issues SET owner_id = NULL WHERE sprint_id = ? AND type = 'task' AND state = 'open'
-        AND module_id IN (SELECT module_id FROM module_owners)`).run(sid);
+      db.prepare("UPDATE issues SET owner_id = NULL WHERE sprint_id = ? AND type = 'task' AND state = 'open'").run(sid);
     }
-    balanceOwners(sid);
+    balanceOwners(sid, undefined, (req.query as any)?.shuffle === '1');
+    return getSprint(sid);
+  });
+  // Clears the owners of the sprint's open (not yet started) tasks, e.g. to try another distribution.
+  app.post('/api/sprints/:id/unassign', async (req) => {
+    const sid = id((req.params as any).id);
+    const sp = getSprint(sid);
+    if (sp.state === 'closed') throw bad('a closed sprint keeps its owners');
+    db.prepare("UPDATE issues SET owner_id = NULL WHERE sprint_id = ? AND type = 'task' AND state = 'open'").run(sid);
     return getSprint(sid);
   });
   app.put('/api/sprints/:id', async (req) => {

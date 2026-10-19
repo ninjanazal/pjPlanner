@@ -21,7 +21,7 @@ Turn one epic, story or bug in pjPlanner into a small set of tasks, each tied to
    - Order tasks along the relations: work in a module that others depend on comes first. Note which task each one waits for.
    - Add a test task only when the story changes a module whose `testStatus` is `none` or `partial`.
    - Aim for 3 to 10 tasks. Prefer fewer, clearer tasks.
-6. **Show the draft.** A table with title, module, estimate, waits for, and suggested owner (only owners of that module). Wait for the user's go-ahead or edits before writing anything.
+6. **Show the draft.** A table with title, module, estimate, waits for, and suggested owner (one person for the whole story; prefer whoever closed the most tasks in those modules). Wait for the user's go-ahead or edits before writing anything.
 7. **Create.** For each task call `create_issue` with `type: "task"`, `parentId`, `moduleId`, `description`, `implementation` and `estimate`. Set `ownerId` or `sprintId` only when the user asked for it. Report the created ids, the total estimate and anything you left out; with a sprint, call `get_sprint_timeline` and share the suggested order.
 
 ## Rules

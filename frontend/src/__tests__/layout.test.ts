@@ -4,7 +4,7 @@ import { HUB_MIN_DEPENDANTS } from '../linkFocus';
 import type { Graph, Module } from '../types';
 
 const mod = (id: number): Module => ({
-  id, name: `M${id}`, description: '', ownerIds: [], color: null, icon: null, apiItems: [],
+  id, name: `M${id}`, description: '', color: null, icon: null, apiItems: [],
   textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null,
 });
 const rel = (id: number, sourceId: number, targetId: number) => ({ id, sourceId, targetId, label: null, color: null });
