@@ -20,11 +20,6 @@ export function openDb(dbPath: string): Database.Database {
       color TEXT,
       icon TEXT
     );
-    CREATE TABLE IF NOT EXISTS module_owners (
-      module_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
-      owner_id INTEGER NOT NULL REFERENCES owners(id) ON DELETE CASCADE,
-      PRIMARY KEY (module_id, owner_id)
-    );
     CREATE TABLE IF NOT EXISTS relations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       source_id INTEGER NOT NULL REFERENCES modules(id) ON DELETE CASCADE,
@@ -154,6 +149,7 @@ export function openDb(dbPath: string): Database.Database {
     db.exec('ALTER TABLE issues ADD COLUMN jira_synced_at TEXT'); // Jira's `updated` right after our own last write; never exported
   }
   migrateWorkflowStates(db);
+  db.exec('DROP TABLE IF EXISTS module_owners'); // modules no longer have owners
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS issues_jira_key ON issues (project_id, jira_key) WHERE jira_key IS NOT NULL');
   return db;
 }

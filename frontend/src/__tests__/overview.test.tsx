@@ -5,7 +5,7 @@ import { parseHash } from '../route';
 import type { Graph, Issue, Module, Project, Sprint } from '../types';
 
 const mod = (id: number, ownerIds: number[]): Module => ({
-  id, name: `Mod${id}`, description: '', ownerIds, color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null,
+  id, name: `Mod${id}`, description: '', color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null,
 });
 const iss = (id: number, p: Partial<Issue> = {}): Issue => ({
   id, type: 'task', title: `T${id}`, description: '', parentId: null, ownerId: null, state: 'open', moduleId: null, sprintId: null, childIds: [], rollupModuleIds: [], ...p,
@@ -40,7 +40,6 @@ describe('ProjectOverview', () => {
     const val = (label: string) => box.getByText(label).parentElement!.querySelector('b')!.textContent;
     expect(val('Open tasks without owner')).toBe('1');
     expect(val('Open tasks not in a sprint')).toBe('1');
-    expect(val('Modules without owner')).toBe('1');
     expect(val('Overloaded owners')).toBe('1');
     expect(screen.queryByText(/side quest/i)).toBeNull();
   });
@@ -63,7 +62,6 @@ describe('ProjectOverview', () => {
   it('maps modules and epics', () => {
     show();
     expect(within(screen.getByLabelText('Module map')).getByText(/1 depends on it/)).toBeInTheDocument();
-    expect(within(screen.getByLabelText('Module map')).getByText(/no owner/)).toBeInTheDocument();
     expect(within(screen.getByLabelText('Epics')).getByRole('link', { name: '#1 Launch' })).toHaveAttribute('href', '#/issues/1');
   });
   it('celebrates when everything is done', () => {

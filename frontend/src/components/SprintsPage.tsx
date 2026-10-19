@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import type { Issue, Module, Owner, Relation, Sprint, SprintInput } from '../types';
+import { STATE_LABEL, type Issue, type Module, type Owner, type Relation, type Sprint, type SprintInput } from '../types';
 import { epicOf, groupIssues, isWork, withSprint, withOwner, withState, type GroupBy } from '../sprintGroups';
+import { NO_FILTER, isFiltering, matchesFilter, usePersisted, type IssueFilter } from '../issueFilters';
+import { FilterBar } from './FilterBar';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
 import { SprintTimeline } from './SprintTimeline';
@@ -17,12 +19,20 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
   const [timeline, setTimeline] = useState<Sprint | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const { error, run } = useAction(true);
-  const work = issues.filter(isWork); // epics and bugs only group; tasks are the sprint work
+  const [filter, setFilter] = usePersisted<IssueFilter>('pjplanner.sprints.filter', NO_FILTER);
+  // Per-panel overrides of the default fold ('b' = backlog); groups folded by "panel:group" key.
+  const [folds, setFolds] = usePersisted<Record<string, boolean>>('pjplanner.sprints.open', {});
+  const [groupsFolded, setGroupsFolded] = usePersisted<string[]>('pjplanner.sprints.groups', []);
+  const allWork = issues.filter(isWork); // epics and bugs only group; tasks are the sprint work
+  const work = allWork.filter((i) => matchesFilter(i, filter, issues));
   const active = sprints.find((s) => s.state === 'active');
   const assignable = sprints.filter((s) => s.state !== 'closed');
   const backlog = work.filter((i) => i.sprintId == null && i.state !== 'closed');
   // Finished work that never went into a sprint still has a home here.
   const done = work.filter((i) => i.sprintId == null && i.state === 'closed');
+  const isOpen = (key: string, dflt: boolean) => folds[key] ?? dflt;
+  const toggleOpen = (key: string, dflt: boolean) => setFolds((f) => ({ ...f, [key]: !(f[key] ?? dflt) }));
+  const toggleGroup = (key: string) => setGroupsFolded((g) => (g.includes(key) ? g.filter((x) => x !== key) : [...g, key]));
   const live = sprints.filter((s) => s.state !== 'closed').sort((a, b) => (a.state === 'active' ? -1 : b.state === 'active' ? 1 : a.id - b.id));
   const history = sprints.filter((s) => s.state === 'closed').sort((a, b) => b.id - a.id);
 
@@ -63,15 +73,43 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
 
   const sprintClosed = (i: Issue) => sprints.find((x) => x.id === i.sprintId)?.state === 'closed';
   const canAssign = (i: Issue) => i.state !== 'closed' && !sprintClosed(i) && owners.length > 0;
-  const choices = (i: Issue) => owners.filter((o) => modules.find((m) => m.id === i.moduleId)?.ownerIds.includes(o.id));
 
   // One task = one slim row: tick, title, then where it is and who has it.
   const task = (i: Issue, opts: { draggable: boolean; toBacklog: boolean; pick: boolean }) => {
     const owner = owners.find((o) => o.id === i.ownerId);
     const mod = modules.find((m) => m.id === i.moduleId);
     const epic = epicOf(i, issues);
+    const parent = issues.find((x) => x.id === i.parentId);
     const closedHere = i.sprintId != null && sprintClosed(i);
     const isDone = i.state === 'closed';
+    if (opts.pick) { // backlog: a taller card with the title first, then what it is and where it goes
+      const story = parent && parent.type !== 'epic' ? parent : undefined;
+      return (
+        <li key={i.id} className="bk" style={{ '--c': mod?.color ?? 'var(--border)' } as React.CSSProperties}
+          draggable={opts.draggable} onDragStart={(e) => e.dataTransfer.setData('text/plain', String(i.id))}>
+          <div className="bk-top">
+            <button className="tk-check" aria-label={`Close issue ${i.title}`} title="Mark as done"
+              onClick={() => act(() => api.updateIssue(i.id, withState(i, 'closed')))} />
+            <span className="bk-id">#{i.id}</span>
+            {i.state !== 'open' && <span className={`state-badge s-${i.state}`}>{STATE_LABEL[i.state]}</span>}
+            <span className="bk-est" title={i.estimate == null ? 'Not estimated (counts as 1 step)' : `${i.estimate} step${i.estimate === 1 ? '' : 's'}`}>{i.estimate ?? '·'}</span>
+          </div>
+          <div className="bk-title">{i.title}</div>
+          <div className="bk-meta">
+            {mod ? <span className="bk-chip" style={chipStyle(mod.color)}>{mod.icon} {mod.name}</span> : <span className="bk-chip warn">No module</span>}
+            {story && <span className="bk-chip plain" title={story.type}>📖 {story.title}</span>}
+            {epic && <span className="bk-chip plain" title="Epic">⚡ {epic.title}</span>}
+            {owner && <span className="bk-chip" style={chipStyle(owner.color)}>{owner.icon} {owner.name}</span>}
+          </div>
+          {assignable.length > 0 && (
+            <select className="tk-pick" aria-label={`Add issue ${i.title} to sprint`} value="" onChange={(e) => e.target.value && move(i, Number(e.target.value))}>
+              <option value="">＋ Add to sprint…</option>
+              {assignable.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+            </select>
+          )}
+        </li>
+      );
+    }
     return (
       <li key={i.id} className={`tk${isDone ? ' is-done' : ''}`} style={{ '--c': mod?.color ?? 'var(--border)' } as React.CSSProperties}
         draggable={opts.draggable} onDragStart={(e) => e.dataTransfer.setData('text/plain', String(i.id))}>
@@ -84,6 +122,7 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
           <span className="tk-sub">
             #{i.id}
             {i.estimate != null && <span> · {i.estimate} step{i.estimate === 1 ? '' : 's'}</span>}
+            {parent && parent.type !== 'epic' && <span title={parent.type}> · {parent.title}</span>}
             {by !== 'epic' && epic && <span title="Epic"> · ⚡ {epic.title}</span>}
             {by !== 'module' && mod && <span> · {mod.icon} {mod.name}</span>}
           </span>
@@ -91,15 +130,14 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
         {canAssign(i) && !opts.pick // in the backlog the owner is dealt automatically once the task joins a sprint
           ? (
             <select className="tk-owner" aria-label={`Assignee for ${i.title}`} value={i.ownerId ?? ''} style={chipStyle(owner?.color ?? null)}
-              disabled={choices(i).length === 0} title={i.moduleId == null ? 'Set a module first' : choices(i).length === 0 ? 'The module has no owners' : undefined}
               onChange={(e) => act(() => api.updateIssue(i.id, withOwner(i, e.target.value ? Number(e.target.value) : null)))}>
-              <option value="">{i.moduleId == null ? 'Set a module first' : choices(i).length === 0 ? 'No module owners' : 'Unassigned'}</option>
-              {choices(i).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              <option value="">Unassigned</option>
+              {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           )
           : owner && <span className="tk-owner-chip" style={chipStyle(owner.color)}>{owner.icon} {owner.name}</span>}
         {canAssign(i) && i.ownerId == null && !opts.pick && (
-          <button className="tk-auto" aria-label={`Auto-assign ${i.title}`} title="Pick the best owner from the module's owners" onClick={() => act(() => api.autoAssignIssue(i.id))}>✨ Auto</button>
+          <button className="tk-auto" aria-label={`Auto-assign ${i.title}`} title="Pick the least loaded owner; a story's tasks go to one person" onClick={() => act(() => api.autoAssignIssue(i.id))}>✨ Auto</button>
         )}
         {opts.pick && assignable.length > 0 && (
           <select className="tk-pick" aria-label={`Add issue ${i.title} to sprint`} value="" onChange={(e) => e.target.value && move(i, Number(e.target.value))}>
@@ -112,15 +150,23 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
     );
   };
 
-  const list = (items: Issue[], opts: { draggable: boolean; toBacklog: boolean; pick: boolean }, empty: string) => {
+  const list = (panelKey: string, items: Issue[], opts: { draggable: boolean; toBacklog: boolean; pick: boolean }, empty: string) => {
     if (items.length === 0) return empty ? <p className="sp-empty">{empty}</p> : null;
     return groupIssues(items, by, modules, owners, issues).map((g) => {
       const src = by === 'module' ? modules.find((m) => String(m.id) === g.key) : by === 'owner' ? owners.find((o) => String(o.id) === g.key) : null;
+      const gk = `${panelKey}:${by}:${g.key}`;
       const sorted = [...g.issues].sort((a, b) => Number(a.state === 'closed') - Number(b.state === 'closed') || a.id - b.id);
       return (
         <section key={g.key} aria-label={g.label || 'Issues'} className="tk-group">
-          {g.label && <h4 style={{ '--c': src?.color ?? 'var(--muted)' } as React.CSSProperties}><i />{g.label}<span>{g.issues.length}</span></h4>}
-          <ul className="tk-list">{sorted.map((i) => task(i, opts))}</ul>
+          {g.label && (
+            <h4 style={{ '--c': src?.color ?? 'var(--muted)' } as React.CSSProperties}>
+              <button type="button" className="fold" aria-expanded={!groupsFolded.includes(gk)} aria-label={`${groupsFolded.includes(gk) ? 'Expand' : 'Collapse'} ${g.label}`} onClick={() => toggleGroup(gk)}>
+                {groupsFolded.includes(gk) ? '▸' : '▾'}
+              </button>
+              <i />{g.label}<span>{g.issues.length}</span>
+            </h4>
+          )}
+          {!groupsFolded.includes(gk) && <ul className="tk-list">{sorted.map((i) => task(i, opts))}</ul>}
         </section>
       );
     });
@@ -154,33 +200,37 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
     const total = s.openCount + s.closedCount;
     const pct = total ? Math.round((s.closedCount / total) * 100) : 0;
     const closed = s.state === 'closed';
+    const open = isOpen(`s${s.id}`, s.state === 'active');
     const unassigned = items.filter((i) => i.state !== 'closed' && i.ownerId == null).length;
     return (
       <section key={s.id} className={`sp2 sp2-${s.state}${over === `s${s.id}` ? ' over' : ''}`} aria-label={`Sprint ${s.name}`} {...dropProps(`s${s.id}`, s.id, !closed)}>
         <header className="sp2-head">
           <div className="sp2-title">
+            <button type="button" className="fold" aria-expanded={open} aria-label={`${open ? 'Collapse' : 'Expand'} sprint ${s.name}`} onClick={() => toggleOpen(`s${s.id}`, s.state === 'active')}>{open ? '▾' : '▸'}</button>
             <h3>{s.name}</h3>
             <span className={`sp-state sp-state-${s.state}`}>{s.state}</span>
+            {!open && <span className="hint">{items.length} task{items.length === 1 ? '' : 's'}{unassigned > 0 && ` · ${unassigned} unassigned`}</span>}
           </div>
           {!closed && (
             <div className="row">
               {s.state === 'active'
                 ? <button onClick={() => { if (window.confirm(`Close sprint "${s.name}"? Its open tasks go back to the backlog and it cannot be reopened.`)) setState(s, 'closed'); }}>Close sprint</button>
                 : <button className="primary" disabled={!!active} title={active ? 'Close the active sprint first' : undefined} onClick={() => setState(s, 'active')}>Start sprint</button>}
-              {unassigned > 0 && <button onClick={() => act(() => api.autoAssignSprint(s.id))} title="Give every unassigned task the best owner from its module">✨ Auto-assign {unassigned}</button>}
-              {s.state === 'active' && items.some((i) => i.state !== 'closed') && <button onClick={() => { if (window.confirm('Re-deal the open tasks of this sprint? Current owners are replaced by a fresh balanced split.')) act(() => api.autoAssignSprint(s.id, true)); }} title="Clear the owners of open tasks and balance them again">↻ Re-assign</button>}
+              {unassigned > 0 && <button onClick={() => act(() => api.autoAssignSprint(s.id))} title="Give every unassigned task an owner (one per story, least loaded first)">✨ Auto-assign {unassigned}</button>}
+              {items.some((i) => i.state === 'open' && i.ownerId != null) && <button onClick={() => { if (window.confirm('Clear the owners of every open task in this sprint?')) act(() => api.clearSprintOwners(s.id), 'Owners cleared'); }} title="Remove the owner from every task that has not been started">✕ Clear owners</button>}
+              {items.some((i) => i.state === 'open') && <button onClick={() => { if (window.confirm('Re-deal the open tasks of this sprint? Current owners are replaced by a new balanced split; press again to get another one.')) act(() => api.autoAssignSprint(s.id, true)); }} title="Clear the owners of open tasks and deal them out again (a different split each time)">↻ Re-assign</button>}
               {items.some((i) => i.state !== 'closed') && <button onClick={() => setTimeline(s)} title="Optimal order of work given module dependencies">Timeline</button>}
               <button onClick={() => setEditing(s)}>Edit</button>
             </div>
           )}
         </header>
-        {s.goal && <p className="sp2-goal">🎯 {s.goal}</p>}
+        {open && s.goal && <p className="sp2-goal">🎯 {s.goal}</p>}
         <div className="sp2-progress">
           <div className="sp-bar" role="progressbar" aria-label="Progress" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}><i style={{ width: `${pct}%` }} /></div>
           <span><b>{s.closedCount}</b> of {total} done{total > 0 && ` · ${pct}%`}</span>
         </div>
-        {workload(items)}
-        <div className="sp2-body">{list(items, { draggable: !closed, toBacklog: !closed, pick: false }, closed ? 'Nothing was finished in this sprint.' : 'Drag tasks here from the backlog.')}</div>
+        {open && workload(items)}
+        {open && <div className="sp2-body">{list(`s${s.id}`, items, { draggable: !closed, toBacklog: !closed, pick: false }, closed ? 'Nothing was finished in this sprint.' : 'Drag tasks here from the backlog.')}</div>}
       </section>
     );
   };
@@ -190,6 +240,8 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
       <div className="row between">
         <h2>Sprints</h2>
         <div className="row">
+          <button type="button" onClick={() => setFolds(Object.fromEntries(sprints.map((x) => [`s${x.id}`, false])))}>Collapse all</button>
+          <button type="button" onClick={() => setFolds(Object.fromEntries(sprints.map((x) => [`s${x.id}`, true])))}>Expand all</button>
           <label className="inline">Group by{' '}
             <select aria-label="Group by" value={by} onChange={(e) => setBy(e.target.value as GroupBy)}>
               <option value="module">Module</option><option value="owner">Owner</option><option value="epic">Epic</option><option value="none">Nothing</option>
@@ -200,18 +252,26 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
       </div>
       {error && <p className="error" role="alert">{error}</p>}
       {!active && sprints.some((s) => s.state === 'planned') && <p className="hint">No active sprint. Start a planned one.</p>}
+      <FilterBar filter={filter} onChange={setFilter} issues={issues} modules={modules} owners={owners} shown={work.length} total={allWork.length} />
       <div className="sp-layout">
         <aside className="sp-side">
           <section className={`sp2 sp2-backlog${over === 'b' ? ' over' : ''}`} aria-label="Backlog" {...dropProps('b', null, true)}>
-            <header className="sp2-head"><div className="sp2-title"><h3>Backlog</h3><span className="sp-state">{backlog.length} open</span></div></header>
-            <p className="sp2-goal">Work waiting for a sprint</p>
-            <div className="sp2-body">{list(backlog, { draggable: true, toBacklog: false, pick: true }, 'Nothing waiting. Every open task is in a sprint.')}</div>
+            <header className="sp2-head"><div className="sp2-title">
+              <button type="button" className="fold" aria-expanded={isOpen('b', true)} aria-label={`${isOpen('b', true) ? 'Collapse' : 'Expand'} backlog`} onClick={() => toggleOpen('b', true)}>{isOpen('b', true) ? '▾' : '▸'}</button>
+              <h3>Backlog</h3><span className="sp-state">{backlog.length} open</span>
+              {backlog.some((i) => i.moduleId == null) && <span className="hint">{backlog.filter((i) => i.moduleId == null).length} without module</span>}
+            </div></header>
+            {isOpen('b', true) && <p className="sp2-goal">Work waiting for a sprint{isFiltering(filter) && ' (filtered)'}</p>}
+            {isOpen('b', true) && <div className="sp2-body">{list('b', backlog, { draggable: true, toBacklog: false, pick: true }, 'Nothing waiting. Every open task is in a sprint.')}</div>}
           </section>
           {done.length > 0 && (
             <section className="sp2 sp2-done" aria-label="Done">
-              <header className="sp2-head"><div className="sp2-title"><h3>Done</h3><span className="sp-state">{done.length}</span></div></header>
-              <p className="sp2-goal">Closed work outside any sprint</p>
-              <div className="sp2-body">{list(done, { draggable: false, toBacklog: false, pick: false }, '')}</div>
+              <header className="sp2-head"><div className="sp2-title">
+                <button type="button" className="fold" aria-expanded={isOpen('d', false)} aria-label={`${isOpen('d', false) ? 'Collapse' : 'Expand'} done`} onClick={() => toggleOpen('d', false)}>{isOpen('d', false) ? '▾' : '▸'}</button>
+                <h3>Done</h3><span className="sp-state">{done.length}</span>
+              </div></header>
+              {isOpen('d', false) && <p className="sp2-goal">Closed work outside any sprint</p>}
+              {isOpen('d', false) && <div className="sp2-body">{list('d', done, { draggable: false, toBacklog: false, pick: false }, '')}</div>}
             </section>
           )}
         </aside>

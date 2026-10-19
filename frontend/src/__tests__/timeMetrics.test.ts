@@ -14,7 +14,7 @@ const open = (id: number, p: { module: number; age: number; touched?: number }):
   createdAt: iso(p.age), updatedAt: iso(p.touched ?? p.age),
 });
 const o = (id: number): Owner => ({ id, name: `O${id}`, color: null, icon: null });
-const mod = (id: number): Module => ({ id, name: `M${id}`, description: '', ownerIds: [], color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null });
+const mod = (id: number): Module => ({ id, name: `M${id}`, description: '', color: null, icon: null, apiItems: [], textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null });
 
 describe('formatDuration', () => {
   it('picks a readable unit', () => {

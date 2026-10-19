@@ -4,7 +4,7 @@ import { IssuesPage } from '../components/IssuesPage';
 import type { Issue, Module, Owner } from '../types';
 
 const mod = (id: number, name: string): Module => ({
-  id, name, description: '', ownerIds: [], color: null, icon: null, apiItems: [],
+  id, name, description: '', color: null, icon: null, apiItems: [],
   textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null,
 });
 const modules = [mod(1, 'Auth'), mod(2, 'Billing')];
@@ -72,7 +72,7 @@ describe('IssuesPage', () => {
     expect(within(screen.getByLabelText('Parent')).getByText(/Login/)).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText('Parent'), '2');
     await userEvent.type(screen.getByLabelText('Module'), 'bll');
-    await userEvent.click(screen.getByRole('option', { name: /Billing/ }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('option', { name: /Billing/ }));
     await userEvent.click(screen.getByText('Create issue'));
     await waitFor(() => expect(changed).toHaveBeenCalled());
     expect(f.mock.calls[0][0]).toBe('/api/issues');
@@ -86,7 +86,7 @@ describe('IssuesPage', () => {
     await userEvent.type(screen.getByLabelText('Title'), 'No module yet');
     expect(screen.getByText('Create issue')).toBeDisabled();
     await userEvent.click(screen.getByLabelText('Module'));
-    await userEvent.click(screen.getByRole('option', { name: /Auth/ }));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('option', { name: /Auth/ }));
     expect(screen.getByText('Create issue')).toBeEnabled();
     await userEvent.click(screen.getByText('Create issue'));
     await waitFor(() => expect(f).toHaveBeenCalled());

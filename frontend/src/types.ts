@@ -9,7 +9,7 @@ export const STROKE_STYLES: StrokeStyle[] = ['solid', 'dashed', 'dotted'];
 export type TestStatus = 'none' | 'partial' | 'full';
 export const TEST_STATUSES: TestStatus[] = ['none', 'partial', 'full'];
 export interface Module {
-  id: number; name: string; description: string; ownerIds: number[];
+  id: number; name: string; description: string;
   color: string | null; icon: string | null; apiItems: ApiItem[];
   textColor: string | null; strokeColor: string | null; strokeStyle: StrokeStyle;
   x: number | null; y: number | null; groupId: number | null;
@@ -18,7 +18,7 @@ export interface Module {
 export interface Relation { id: number; sourceId: number; targetId: number; label: string | null; color: string | null }
 export interface Graph { modules: Module[]; owners: Owner[]; relations: Relation[]; groups: Group[] }
 export interface ModuleInput {
-  name: string; description?: string; ownerIds?: number[];
+  name: string; description?: string;
   color?: string | null; icon?: string | null;
   textColor?: string | null; strokeColor?: string | null; strokeStyle?: StrokeStyle; apiItems?: ApiItemInput[]; groupId?: number | null;
   testStatus?: TestStatus | null; testNotes?: string

@@ -13,7 +13,7 @@ import { IssuesPage } from './components/IssuesPage';
 import { SprintsPage } from './components/SprintsPage';
 import { GroupsPage } from './components/GroupsPage';
 import { ownerMap, sprintHeat } from './heatmap';
-import { autoAssign, OWNERS_PER_MODULE } from './autoAssign';
+import { topExperts } from './metrics';
 import { LockButton } from './components/LockButton';
 import { McpDialog } from './components/McpDialog';
 import { ProjectsPage } from './components/ProjectsPage';
@@ -44,6 +44,7 @@ export default function App() {
   const activeProject = projects.find((p) => p.id === projectId) ?? projects[0] ?? null;
   const [heatSprint, setHeatSprint] = useState<number | null>(null);
   const [personId, setPersonId] = useState<number | null>(null);
+  const experts = useMemo(() => topExperts(issues), [issues]);
   const heat = useMemo(() => (heatSprint != null && sprints.some((x) => x.id === heatSprint) ? sprintHeat(issues, heatSprint) : null), [issues, sprints, heatSprint]);
   const [error, setError] = useState<string | null>(null);
   const { theme, toggle } = useTheme();
@@ -175,7 +176,7 @@ export default function App() {
       const made = new Map<number, number>();
       for (const m of c.modules) {
         const body = {
-          name: `${m.name} (copy)`, description: m.description, ownerIds: m.ownerIds, color: m.color, icon: m.icon, textColor: m.textColor,
+          name: `${m.name} (copy)`, description: m.description, color: m.color, icon: m.icon, textColor: m.textColor,
           strokeColor: m.strokeColor, strokeStyle: m.strokeStyle, apiItems: m.apiItems.map(({ id: _id, ...rest }) => rest), groupId: m.groupId,
           testStatus: m.testStatus, testNotes: m.testNotes,
         };
@@ -234,7 +235,7 @@ export default function App() {
     const m = graphRef.current?.modules.find((x) => x.id === id);
     if (!m) return;
     await api.updateModule(id, {
-      name: m.name, description: m.description, ownerIds: m.ownerIds, color: m.color, icon: m.icon,
+      name: m.name, description: m.description, color: m.color, icon: m.icon,
       textColor: m.textColor, strokeColor: m.strokeColor, strokeStyle: m.strokeStyle, apiItems: m.apiItems, groupId,
     });
     await refresh();
@@ -244,21 +245,6 @@ export default function App() {
     try {
       await setGroup(id, groupId);
       if (prev !== groupId) record(() => setGroup(id, prev), () => setGroup(id, groupId));
-    } catch (e) { setError((e as Error).message); }
-  };
-  const needsOwners = graph.modules.some((m) => m.ownerIds.length < OWNERS_PER_MODULE);
-  const assignOwners = async () => {
-    const changes = autoAssign(graph.modules, graph.owners);
-    if (changes.size === 0) { setError('Add owners first (Owners tab); there is nobody to assign.'); return; }
-    try {
-      await Promise.all([...changes].map(([id, ownerIds]) => {
-        const m = graph.modules.find((x) => x.id === id)!;
-        return api.updateModule(id, {
-          name: m.name, description: m.description, ownerIds, color: m.color, icon: m.icon,
-          textColor: m.textColor, strokeColor: m.strokeColor, strokeStyle: m.strokeStyle, apiItems: m.apiItems, groupId: m.groupId,
-        });
-      }));
-      await refresh();
     } catch (e) { setError((e as Error).message); }
   };
   // Keep the in-memory graph in step with saved positions so a remounted diagram starts from them.
@@ -303,7 +289,6 @@ export default function App() {
 
   const diagramTools = (
     <>
-      {needsOwners && <button className="toolbar-btn" onClick={assignOwners} title={`Give every module ${OWNERS_PER_MODULE} owners, spreading the work evenly`}>Auto-assign</button>}
       {(sprints.length > 0 || graph.owners.length > 0) && (
         <label className="view-pick toolbar-btn" title="Colour the diagram by sprint load or by person">
           <span aria-hidden="true">{personSel ? '👤' : heatSel ? '🔥' : '🎨'}</span>
@@ -416,6 +401,7 @@ export default function App() {
             highlightedModuleIds={selIssue ? selIssue.rollupModuleIds : null}
             heat={heat}
             person={person}
+            experts={experts}
             onAdd={() => setDialog({ kind: 'new' })}
             tools={diagramTools}
           />

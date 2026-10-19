@@ -4,7 +4,7 @@ import { API_KINDS, type ApiKind, type TestStatus } from '../types';
 import { Handle, Position, useConnection, type Node, type NodeProps } from '@xyflow/react';
 
 export interface CardData extends Record<string, unknown> {
-  name: string; owners: string[]; color: string | null; icon: string | null;
+  name: string; experts: string[]; color: string | null; icon: string | null;
   apiItems: { kind: ApiKind; name: string; signature: string }[];
   textColor?: string | null; strokeColor?: string | null; strokeStyle?: string;
   heat?: Heat | null; // set while a sprint heatmap is shown
@@ -47,8 +47,8 @@ export function ModuleCard({ data, selected }: NodeProps<CardNode>) {
   if (data.heat) { vars['--card-bg'] = data.heat.open ? heatColor(data.heat.level) : 'var(--cold)'; vars['--card-fg'] = '#111'; }
   if (data.person) {
     const c = data.person.color ?? '#4f7cff';
-    vars['--card-bg'] = data.person.owned ? c : data.person.open || data.person.done ? `color-mix(in srgb, ${c} 35%, var(--surface))` : 'var(--cold)';
-    vars['--card-fg'] = data.person.owned ? '#fff' : '#111';
+    vars['--card-bg'] = data.person.experience > 0 ? c : data.person.open || data.person.done ? `color-mix(in srgb, ${c} 35%, var(--surface))` : 'var(--cold)';
+    vars['--card-fg'] = data.person.experience > 0 ? '#fff' : '#111';
   }
   if (data.textColor && !data.heat && !data.person) vars['--card-fg'] = data.textColor;
   if (data.strokeColor) vars['--card-bc'] = data.strokeColor;
@@ -57,17 +57,17 @@ export function ModuleCard({ data, selected }: NodeProps<CardNode>) {
   const open = !!selected && data.apiItems.length > 0;
   const style = { ...vars, width: open ? Math.max(cardWidth(data.name, data.icon, tier), CARD_OPEN_W) : cardWidth(data.name, data.icon, tier) } as React.CSSProperties;
   const counts = data.apiItems.reduce<Partial<Record<ApiKind, number>>>((c, i) => ({ ...c, [i.kind]: (c[i.kind] ?? 0) + 1 }), {});
-  const ownersText = `Owners: ${data.owners.length ? data.owners.join(', ') : '-'}`;
+  const ownersText = `Experts: ${data.experts.length ? data.experts.join(', ') : '-'}`;
   return (
-    <div className={`card t-${tier}${selected ? ' selected' : ''}${open ? ' open' : ''}${data.heat && !data.heat.open ? ' cold' : ''}${data.person && !data.person.owned && !data.person.open && !data.person.done ? ' cold' : ''}`} style={style} data-testid="module-card">
+    <div className={`card t-${tier}${selected ? ' selected' : ''}${open ? ' open' : ''}${data.heat && !data.heat.open ? ' cold' : ''}${data.person && !data.person.experience && !data.person.open && !data.person.done ? ' cold' : ''}`} style={style} data-testid="module-card">
       {SIDES.map((p) => <Handle key={p} id={p} type="source" position={p} className="card-handle" />)}
       <Handle id="drop" type="target" position={Position.Left} isConnectableStart={false}
         className="card-drop" style={{ pointerEvents: connecting ? 'all' : 'none' }} />
       <div className="card-name" title={data.name}>{data.icon && <span className="card-icon">{data.icon} </span>}{data.name}</div>
       {!!data.usedBy && <div className="card-hub" title="Shared foundation: many modules depend on it">used by {data.usedBy}</div>}
       {data.heat && <div className="card-heat" data-testid="card-heat">{data.heat.open} open{data.heat.done ? ` · ${data.heat.done} done` : ''}</div>}
-      {data.person && (data.person.owned || data.person.open > 0 || data.person.done > 0) && (
-        <div className="card-heat" data-testid="card-person">{data.person.owned ? '★ owner' : 'helps'} · {data.person.open} open{data.person.done ? ` · ${data.person.done} done` : ''}</div>
+      {data.person && (data.person.experience > 0 || data.person.open > 0 || data.person.done > 0) && (
+        <div className="card-heat" data-testid="card-person">{data.person.experience > 0 ? `★ ${data.person.experience} closed` : 'new here'} · {data.person.open} open{data.person.done ? ` · ${data.person.done} done` : ''}</div>
       )}
       <div className="card-foot">
         {data.testStatus && <span className={`card-test t-${data.testStatus}`} title={TEST_BADGE[data.testStatus].label} data-testid="card-test" aria-label={TEST_BADGE[data.testStatus].label}>{TEST_BADGE[data.testStatus].glyph}</span>}

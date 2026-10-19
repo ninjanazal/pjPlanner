@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import type { ApiItemInput, ApiKind, Graph, Issue, Module, StrokeStyle, TestStatus } from '../types';
+import type { ApiItemInput, ApiKind, Graph, Issue, Module, Owner, StrokeStyle, TestStatus } from '../types';
+import { moduleExperience } from '../metrics';
 import { API_KINDS, STROKE_STYLES } from '../types';
 import type { Theme } from '../theme';
 import { randomIcon } from '../randomIcon';
@@ -79,7 +80,10 @@ function GroupChip({ graph, module, groupId, onChanged }: { graph: Graph; module
 
 function ModuleView({ graph, issues, module, onEdit }: { graph: Graph; issues: Issue[]; module: Module; onEdit: (withItem?: boolean) => void }) {
   const items = module.apiItems;
-  const owners = graph.owners.filter((o) => module.ownerIds.includes(o.id));
+  const experts = [...(moduleExperience(issues).get(module.id) ?? [])]
+    .map(([ownerId, closed]) => ({ owner: graph.owners.find((o) => o.id === ownerId), closed }))
+    .filter((e): e is { owner: Owner; closed: number } => Boolean(e.owner))
+    .sort((a, b) => b.closed - a.closed || a.owner.name.localeCompare(b.owner.name));
   const linked = issues.filter((i) => i.moduleId === module.id);
   return (
     <div className="module-view">
@@ -103,13 +107,13 @@ function ModuleView({ graph, issues, module, onEdit }: { graph: Graph; issues: I
           </div>
         ))}
       </section>
-      <section aria-label="Owners">
-        <h3>Owners</h3>
-        {owners.length === 0 ? <p className="hint">No owners assigned.</p> : (
+      <section aria-label="Experience">
+        <h3>Experience</h3>
+        {experts.length === 0 ? <p className="hint">Nobody has closed a task here yet.</p> : (
           <div className="row wrap">
-            {owners.map((o) => (
-              <span key={o.id} className="chip owner-chip" style={o.color ? ({ '--chip-c': o.color } as React.CSSProperties) : undefined}>
-                {o.icon && <span aria-hidden="true">{o.icon}</span>}{o.name}
+            {experts.map(({ owner: o, closed }) => (
+              <span key={o.id} className="chip owner-chip" title={`${o.name} closed ${closed} task${closed === 1 ? '' : 's'} in this module`} style={o.color ? ({ '--chip-c': o.color } as React.CSSProperties) : undefined}>
+                {o.icon && <span aria-hidden="true">{o.icon}</span>}{o.name} · {closed}
               </span>
             ))}
           </div>
@@ -146,7 +150,6 @@ interface FormProps {
 function ModuleForm({ graph, module, theme, startAdding, onDirty, onSaved, onDeleted, onLinked, onCancel }: FormProps) {
   const [name, setName] = useState(module?.name ?? '');
   const [description, setDescription] = useState(module?.description ?? '');
-  const [ownerIds, setOwnerIds] = useState<number[]>(module?.ownerIds ?? []);
   const [color, setColor] = useState<string | null>(module?.color ?? null);
   const [textColor, setTextColor] = useState<string | null>(module?.textColor ?? null);
   const [strokeColor, setStrokeColor] = useState<string | null>(module?.strokeColor ?? null);
@@ -169,9 +172,6 @@ function ModuleForm({ graph, module, theme, startAdding, onDirty, onSaved, onDel
   const [linkLabel, setLinkLabel] = useState('');
   const [linkColor, setLinkColor] = useState<string | null>(null);
   const { error, run } = useAction();
-
-  const toggleOwner = (id: number) =>
-    setOwnerIds((o) => (o.includes(id) ? o.filter((x) => x !== id) : [...o, id]));
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,7 +215,7 @@ function ModuleForm({ graph, module, theme, startAdding, onDirty, onSaved, onDel
     : 0;
 
   const body = {
-    name, description, ownerIds, color, icon, textColor, strokeColor, strokeStyle, groupId, testStatus, testNotes,
+    name, description, color, icon, textColor, strokeColor, strokeStyle, groupId, testStatus, testNotes,
     apiItems: items.map(({ key: _k, ...r }) => r),
   };
   const snapshot = JSON.stringify(body);
@@ -246,18 +246,6 @@ function ModuleForm({ graph, module, theme, startAdding, onDirty, onSaved, onDel
             </select>
           </label>
           <label>Test notes<textarea aria-label="Test notes" placeholder="Framework, where the tests live, what is not covered" value={testNotes} onChange={(e) => setTestNotes(e.target.value)} /></label>
-        </fieldset>
-        <fieldset>
-          <legend>Owners</legend>
-          {graph.owners.length === 0 && <small>No owners yet. Add some on the Owners page.</small>}
-          {graph.owners.map((o) => (
-            <label key={o.id} className="check">
-              <input type="checkbox" checked={ownerIds.includes(o.id)} onChange={() => toggleOwner(o.id)} />
-              {o.color && <span className="swatch" style={{ background: o.color }} data-testid="owner-swatch" />}
-              {o.icon && <span>{o.icon}</span>}
-              {o.name}
-            </label>
-          ))}
         </fieldset>
         <fieldset>
           <legend>Look</legend>

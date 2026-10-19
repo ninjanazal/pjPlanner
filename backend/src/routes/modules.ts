@@ -11,10 +11,8 @@ const TEST_STATUSES = ['none', 'partial', 'full'];
 export function moduleStore(db: Database.Database) {
   const modules = (where = '', ...args: unknown[]) => {
     const rows = db.prepare(`SELECT * FROM modules WHERE project_id = ? ${where} ORDER BY id`).all(P(), ...args) as any[];
-    const owners = db.prepare('SELECT mo.module_id, mo.owner_id FROM module_owners mo JOIN modules m ON m.id = mo.module_id WHERE m.project_id = ? ORDER BY mo.owner_id').all(P()) as any[];
     const items = db.prepare('SELECT i.* FROM module_api_items i JOIN modules m ON m.id = i.module_id WHERE m.project_id = ? ORDER BY i.position, i.id').all(P()) as any[];
-    const ownersBy = new Map<number, number[]>(), itemsBy = new Map<number, any[]>();
-    for (const o of owners) ownersBy.set(o.module_id, [...(ownersBy.get(o.module_id) ?? []), o.owner_id]);
+    const itemsBy = new Map<number, any[]>();
     for (const i of items) itemsBy.set(i.module_id, [...(itemsBy.get(i.module_id) ?? []), i]);
     return rows.map((m) => ({
       id: m.id, name: m.name, description: m.description,
@@ -27,7 +25,6 @@ export function moduleStore(db: Database.Database) {
       apiItems: (itemsBy.get(m.id) ?? []).map((i) => ({
         id: i.id, kind: i.kind, name: i.name, signature: i.signature, description: i.description,
       })),
-      ownerIds: ownersBy.get(m.id) ?? [],
     }));
   };
   const getModule = (mid: number) => {
@@ -44,13 +41,7 @@ export function moduleStore(db: Database.Database) {
     const name = str(b.name, 'name');
     const description = b.description === undefined ? '' : b.description;
     if (typeof description !== 'string') throw bad('description must be a string');
-    const ownerIds = b.ownerIds === undefined ? [] : b.ownerIds;
-    if (!Array.isArray(ownerIds) || !ownerIds.every((x) => Number.isInteger(x))) throw bad('ownerIds must be an array of integers');
-    const unique = [...new Set(ownerIds as number[])];
-    for (const o of unique) {
-      if (!db.prepare('SELECT 1 FROM owners WHERE id = ? AND project_id = ?').get(o, P())) throw bad(`unknown owner id ${o}`);
-    }
-    return { name, description, ownerIds: unique, ...parseExtras(b) };
+    return { name, description, ...parseExtras(b) };
   }
 
   // Absent fields stay undefined so PUT can leave stored values untouched.
@@ -124,23 +115,17 @@ export function moduleStore(db: Database.Database) {
       else ins.run(mid, it.kind, it.name, it.signature, it.description, pos);
     });
   };
-  const setOwners = (mid: number, ownerIds: number[]) => {
-    db.prepare('DELETE FROM module_owners WHERE module_id = ?').run(mid);
-    const ins = db.prepare('INSERT INTO module_owners (module_id, owner_id) VALUES (?, ?)');
-    for (const o of ownerIds) ins.run(mid, o);
-  };
-  return { modules, getModule, moduleExists, parseModule, parseExtras, setItems, setOwners };
+  return { modules, getModule, moduleExists, parseModule, parseExtras, setItems };
 }
 
 export function moduleRoutes(app: FastifyInstance, db: Database.Database) {
-  const { modules, getModule, moduleExists, parseModule, setItems, setOwners } = moduleStore(db);
+  const { modules, getModule, moduleExists, parseModule, setItems } = moduleStore(db);
   app.get('/api/modules', async () => modules());
   app.post('/api/modules', async (req, reply) => {
     const m = parseModule(obj(req.body));
     const mid = db.transaction(() => {
       const r = db.prepare('INSERT INTO modules (project_id, name, description, color, icon, text_color, stroke_color, stroke_style, group_id, test_status, test_notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
         .run(P(), m.name, m.description, m.color ?? null, m.icon ?? null, m.textColor ?? null, m.strokeColor ?? null, m.strokeStyle ?? 'solid', m.groupId ?? null, m.testStatus ?? null, m.testNotes ?? '');
-      setOwners(Number(r.lastInsertRowid), m.ownerIds);
       if (m.apiItems) setItems(Number(r.lastInsertRowid), m.apiItems);
       return Number(r.lastInsertRowid);
     })();
@@ -161,7 +146,6 @@ export function moduleRoutes(app: FastifyInstance, db: Database.Database) {
       if (m.groupId !== undefined) db.prepare('UPDATE modules SET group_id = ? WHERE id = ?').run(m.groupId, mid);
       if (m.testStatus !== undefined) db.prepare('UPDATE modules SET test_status = ? WHERE id = ?').run(m.testStatus, mid);
       if (m.testNotes !== undefined) db.prepare('UPDATE modules SET test_notes = ? WHERE id = ?').run(m.testNotes, mid);
-      setOwners(mid, m.ownerIds);
       if (m.apiItems) setItems(mid, m.apiItems);
     })();
     return getModule(mid);

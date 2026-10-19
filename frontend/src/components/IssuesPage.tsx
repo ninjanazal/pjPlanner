@@ -1,7 +1,9 @@
 import { createContext, useContext, useState } from 'react';
 import { api } from '../api';
 import { ISSUE_STATES, ISSUE_TYPES, STATE_LABEL, TYPE_ICON, type Issue, type IssueState, type IssueType, type Module, type Owner, type Project, type Sprint } from '../types';
-import { buildTree, childTypes, hideClosed, parentOptions, type IssueNode } from '../issueTree';
+import { buildTree, childTypes, filterTree, hideClosed, parentOptions, type IssueNode } from '../issueTree';
+import { NO_FILTER, isFiltering, matchesFilter, usePersisted, type IssueFilter } from '../issueFilters';
+import { FilterBar } from './FilterBar';
 import { QuickClose } from './QuickClose';
 import { JiraLogo, RefreshIcon } from './JiraLogo';
 import { BreakdownDialog } from './BreakdownDialog';
@@ -35,9 +37,18 @@ export function IssuesPage({ issues, sprints = [], modules, owners, issueId = nu
       }, 'Synced with Jira');
     } finally { setSyncing(false); }
   };
+  const [filter, setFilter] = usePersisted<IssueFilter>('pjplanner.issues.filter', NO_FILTER);
+  const [collapsed, setCollapsed] = usePersisted<number[]>('pjplanner.issues.collapsed', []);
+  const filtering = isFiltering(filter);
+  const hideNow = hide && !filter.state; // asking for a state shows it even when closed ones are hidden
+  const match = (i: Issue) => matchesFilter(i, filter, issues);
   const all = buildTree(issues);
-  const tree = hide ? hideClosed(all) : all;
-  const closedList = issues.filter((i) => i.state === 'closed').sort((a, b) => b.id - a.id);
+  const filtered = filtering ? filterTree(all, match) : all;
+  const tree = hideNow ? hideClosed(filtered) : filtered;
+  const closedList = issues.filter((i) => i.state === 'closed' && (!filtering || match(i))).sort((a, b) => b.id - a.id);
+  const parents = [...new Set(issues.flatMap((i) => (i.parentId != null ? [i.parentId] : [])))];
+  const toggle = (id: number) => setCollapsed((c) => (c.includes(id) ? c.filter((x) => x !== id) : [...c, id]));
+  const count = (nodes: IssueNode[]): number => nodes.reduce((n, x) => n + 1 + count(x.children), 0);
 
   if (issueId != null) {
     return <IssuePage key={issueId} issue={issues.find((i) => i.id === issueId) ?? null} issues={issues} sprints={sprints} modules={modules} owners={owners} onChanged={onChanged} project={project} />;
@@ -48,17 +59,20 @@ export function IssuesPage({ issues, sprints = [], modules, owners, issueId = nu
       <div className="row between">
         <h2>Issues</h2>
         <div className="row">
+          <button type="button" onClick={() => setCollapsed(parents)} disabled={parents.length === 0}>Collapse all</button>
+          <button type="button" onClick={() => setCollapsed([])} disabled={collapsed.length === 0}>Expand all</button>
           <label className="check"><input type="checkbox" checked={hide} onChange={(e) => setHide(e.target.checked)} />Hide closed</label>
           {canSync && <button className={`icon-btn${syncing ? ' spinning' : ''}`} onClick={syncAll} disabled={syncing} title="Sync with Jira" aria-label="Sync with Jira"><JiraLogo size={14} /><RefreshIcon /></button>}
           <button className="primary" onClick={() => setEditing('new')}>Add issue</button>
         </div>
       </div>
       {syncError && <p className="error" role="alert">{syncError}</p>}
-      {tree.length === 0 && <p className="hint">{issues.length === 0 ? 'No issues yet. Add one to start tracking work.' : 'All issues are closed.'}</p>}
+      {issues.length > 0 && <FilterBar filter={filter} onChange={setFilter} issues={issues} modules={modules} owners={owners} sprints={sprints} fields={{ state: true, type: true, sprint: true }} shown={count(tree)} total={issues.length} />}
+      {tree.length === 0 && <p className="hint">{issues.length === 0 ? 'No issues yet. Add one to start tracking work.' : filtering ? 'No issues match the filter.' : 'All issues are closed.'}</p>}
       <ul className="issue-tree" role="tree">
-        {tree.map((n) => <IssueRow key={n.issue.id} node={n} depth={0} modules={modules} owners={owners} onChanged={onChanged} />)}
+        {tree.map((n) => <IssueRow key={n.issue.id} node={n} depth={0} modules={modules} owners={owners} onChanged={onChanged} collapsed={filtering ? [] : collapsed} onToggle={toggle} />)}
       </ul>
-      {hide && closedList.length > 0 && (
+      {hideNow && closedList.length > 0 && (
         <details className="closed-list">
           <summary>Closed ({closedList.length})</summary>
           <ul className="issue-tree">
@@ -96,15 +110,20 @@ export const TypeBadge = ({ type }: { type: IssueType }) =>
   <span className={`type-badge t-${type}`}><span aria-hidden="true">{TYPE_ICON[type]}</span> {type}</span>;
 export const StateBadge = ({ state }: { state: IssueState }) => <span className={`state-badge s-${state}`}>{STATE_LABEL[state]}</span>;
 
-function IssueRow({ node, depth, modules, owners, onChanged }: {
-  node: IssueNode; depth: number; modules: Module[]; owners: Owner[]; onChanged: () => void;
+function IssueRow({ node, depth, modules, owners, onChanged, collapsed, onToggle }: {
+  node: IssueNode; depth: number; modules: Module[]; owners: Owner[]; onChanged: () => void; collapsed: number[]; onToggle: (id: number) => void;
 }) {
   const i = node.issue;
   const owner = owners.find((o) => o.id === i.ownerId);
   const mod = modules.find((m) => m.id === i.moduleId);
+  const folded = collapsed.includes(i.id);
+  const kids = node.children.length;
   return (
-    <li role="treeitem" aria-level={depth + 1}>
+    <li role="treeitem" aria-level={depth + 1} aria-expanded={kids ? !folded : undefined}>
       <div className="issue-row" style={{ marginLeft: depth * 24 }}>
+        {kids > 0
+          ? <button type="button" className="tree-toggle" aria-label={`${folded ? 'Expand' : 'Collapse'} ${i.title}`} onClick={() => onToggle(i.id)}>{folded ? '▸' : '▾'}</button>
+          : <span className="tree-toggle" aria-hidden="true" />}
         <QuickClose issue={i} onChanged={onChanged} />
         <TypeBadge type={i.type} />
         <span className="hint">#{i.id}</span>
@@ -113,9 +132,10 @@ function IssueRow({ node, depth, modules, owners, onChanged }: {
         <JiraKey issue={i} />
         {owner && <span className="chip" style={{ '--chip-c': owner.color ?? 'var(--border)' } as React.CSSProperties}>{owner.icon} {owner.name}</span>}
         {mod && <span className="chip" data-testid="module-chip" style={{ '--chip-c': mod.color ?? 'var(--border)' } as React.CSSProperties}>{mod.icon} {mod.name}</span>}
+        {folded && <span className="hint">{kids} hidden</span>}
       </div>
-      {node.children.length > 0 && (
-        <ul role="group">{node.children.map((c) => <IssueRow key={c.issue.id} node={c} depth={depth + 1} modules={modules} owners={owners} onChanged={onChanged} />)}</ul>
+      {kids > 0 && !folded && (
+        <ul role="group">{node.children.map((c) => <IssueRow key={c.issue.id} node={c} depth={depth + 1} modules={modules} owners={owners} onChanged={onChanged} collapsed={collapsed} onToggle={onToggle} />)}</ul>
       )}
     </li>
   );
@@ -135,7 +155,6 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
   const { error, run } = useAction();
   const dirty = JSON.stringify(f) !== JSON.stringify(init);
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((s) => ({ ...s, [k]: v }));
-  const moduleOwners = owners.filter((o) => modules.find((m) => m.id === f.moduleId)?.ownerIds.includes(o.id));
   const options = parentOptions(issues, f.type, issue?.id);
   // A parent invalid for the chosen type is treated as none rather than sent to the server.
   const parentId = options.some((o) => o.id === f.parentId) ? f.parentId : null;
@@ -173,10 +192,7 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
           </label>
         )}
         {f.type === 'task' && <label>Module (required)
-          <ModulePicker modules={modules} value={f.moduleId} required onChange={(moduleId) => {
-            const keeps = modules.find((m) => m.id === moduleId)?.ownerIds.includes(f.ownerId ?? -1);
-            setF((s) => ({ ...s, moduleId, ownerId: keeps ? s.ownerId : null }));
-          }} />
+          <ModulePicker modules={modules} value={f.moduleId} required onChange={(moduleId) => set('moduleId', moduleId)} />
         </label>}
         {f.type === 'task' && <div className="field"><span className="field-label">Estimate (steps)</span>
           <EstimatePicker value={f.estimate} onChange={(v) => set('estimate', v)} />
@@ -188,9 +204,9 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
           </select>
         </label>}
         {f.type === 'task' && issue && <label>Assignee
-          <select aria-label="Assignee" value={f.ownerId ?? ''} disabled={moduleOwners.length === 0 && f.ownerId == null} onChange={(e) => set('ownerId', num(e.target.value))}>
-            <option value="">{f.ownerId != null ? 'Unassigned' : f.moduleId == null ? 'Pick a module first' : moduleOwners.length === 0 ? 'This module has no owners' : 'Unassigned'}</option>
-            {moduleOwners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          <select aria-label="Assignee" value={f.ownerId ?? ''} disabled={owners.length === 0} onChange={(e) => set('ownerId', num(e.target.value))}>
+            <option value="">{owners.length === 0 ? 'No owners yet' : 'Unassigned'}</option>
+            {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
           </select>
         </label>}
         <label>State

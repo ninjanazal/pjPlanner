@@ -20,8 +20,8 @@ describe('issue workflow states', () => {
   it('shows the readable name on the badge and offers all four in the editor', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200, ok: true, json: async () => ({}) }));
     render(<IssuesPage issues={[mk({ id: 1, title: 'In review', state: 'code_review' }), mk({ id: 2, title: 'Validating', state: 'test_validation' })]} modules={[]} owners={[]} onChanged={() => {}} />);
-    expect(screen.getByText('code review')).toHaveClass('state-badge', 's-code_review');
-    expect(screen.getByText('test validation')).toHaveClass('s-test_validation');
+    expect(screen.getByText('code review', { selector: '.state-badge' })).toHaveClass('state-badge', 's-code_review');
+    expect(screen.getByText('test validation', { selector: '.state-badge' })).toHaveClass('s-test_validation');
     cleanup();
     render(<IssuesPage issues={[mk({ id: 1, title: 'In review', state: 'code_review' })]} modules={[]} owners={[]} issueId={1} onChanged={() => {}} />);
     const select = await screen.findByLabelText('State');
@@ -36,7 +36,7 @@ describe('issue workflow states', () => {
       mk({ id: 3, title: 'c', moduleId: 1, sprintId: 1, state: 'closed' }),
     ];
     expect(sprintHeat(issues, 1).get(1)).toMatchObject({ open: 2, done: 1 });
-    const mod = { id: 1, ownerIds: [], name: 'M' } as unknown as Module;
+    const mod = { id: 1, name: 'M' } as unknown as Module;
     const sprint = { id: 1, state: 'active' } as Sprint;
     expect(ownerMap(issues.map((i) => ({ ...i, ownerId: 7 })), [mod], [sprint], 7, null).get(1)).toMatchObject({ open: 2, done: 1 });
     const tl = buildTimeline(issues.map((i) => ({ ...i, ownerId: 7 })), [mod], []);

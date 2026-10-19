@@ -12,7 +12,7 @@ vi.mock('../components/GraphView', () => ({
 }));
 
 const mod = (id: number, name: string) => ({
-  id, name, description: '', ownerIds: [], color: null, icon: null, apiItems: [],
+  id, name, description: '', color: null, icon: null, apiItems: [],
   textColor: null, strokeColor: null, strokeStyle: 'solid', x: id * 400, y: 0, groupId: null,
 });
 const graph = { owners: [], groups: [], relations: [{ id: 1, sourceId: 1, targetId: 2, label: null, color: null }], modules: [mod(1, 'Alpha'), mod(2, 'Beta')] };

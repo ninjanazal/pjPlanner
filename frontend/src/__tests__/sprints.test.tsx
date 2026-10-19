@@ -62,7 +62,7 @@ describe('SprintsPage', () => {
     render(<SprintsPage sprints={[sprint(1, 'active')]} modules={[]} owners={[]} onChanged={() => {}}
       issues={[issue(1, { type: 'epic', title: 'Big goal' }), issue(2, { parentId: 1, title: 'Child' })]} />);
     expect(screen.getByText('Child')).toBeInTheDocument();
-    expect(screen.getAllByText(/Big goal/)).toHaveLength(1); // only the chip on the child
+    expect(screen.getAllByText(/Big goal/, { selector: 'span[title="Epic"]' })).toHaveLength(1); // only the chip on the child
   });
 
   it('adds a backlog issue to a sprint with a full issue update', async () => {

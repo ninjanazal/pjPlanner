@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 export function migrateOwners(db: Database.Database) {
   const names = () => (db.prepare('PRAGMA table_info(owners)').all() as { name: string }[]).map((c) => c.name);
   if (names().includes('email')) {
-    // foreign_keys cannot be changed inside a transaction; with it ON, DROP TABLE would cascade-delete module_owners.
+    // foreign_keys cannot be changed inside a transaction; with it ON, DROP TABLE would cascade-delete rows that reference owners.
     db.pragma('foreign_keys = OFF');
     try {
       db.transaction(() => {

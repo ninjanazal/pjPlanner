@@ -7,7 +7,7 @@ import { ModuleDialog } from '../components/ModuleDialog';
 import type { Graph, Issue, Module } from '../types';
 
 const mod = (id: number, name: string): Module => ({
-  id, name, description: '', ownerIds: [], color: null, icon: null, apiItems: [],
+  id, name, description: '', color: null, icon: null, apiItems: [],
   textColor: null, strokeColor: null, strokeStyle: 'solid', x: null, y: null, groupId: null,
 });
 const mk = (p: Partial<Issue> & Pick<Issue, 'id' | 'type' | 'title'>): Issue => ({

@@ -26,15 +26,16 @@ describe('heatmap', () => {
 
 import { ownerMap } from '../heatmap';
 describe('ownerMap', () => {
-  it('marks owned modules and counts the person\'s tasks in live sprints', () => {
-    const modules = [{ id: 1, ownerIds: [5] }, { id: 2, ownerIds: [] }, { id: 3, ownerIds: [] }] as never[];
+  it('counts closed tasks per module as experience and the the person\'s tasks in live sprints', () => {
+    const modules = [{ id: 1 }, { id: 2 }, { id: 3 }] as never[];
     const sprints = [{ id: 1, state: 'active' }, { id: 2, state: 'closed' }] as never[];
     const m = ownerMap([
       mk(1, { ownerId: 5, moduleId: 2, sprintId: 1 }), mk(2, { ownerId: 5, moduleId: 2, sprintId: 1, state: 'closed' }),
       mk(3, { ownerId: 5, moduleId: 3, sprintId: 2 }), mk(4, { ownerId: 6, moduleId: 1, sprintId: 1 }),
+      mk(5, { ownerId: 5, moduleId: 1, state: 'closed' }), mk(6, { ownerId: 6, moduleId: 1, state: 'closed' }),
     ], modules, sprints, 5, null);
-    expect(m.get(1)).toMatchObject({ owned: true, open: 0, done: 0 });
-    expect(m.get(2)).toMatchObject({ owned: false, open: 1, done: 1 });
-    expect(m.get(3)).toMatchObject({ owned: false, open: 0, done: 0 }); // closed sprint is history
+    expect(m.get(1)).toMatchObject({ experience: 1, open: 0, done: 0 });
+    expect(m.get(2)).toMatchObject({ experience: 1, open: 1, done: 1 });
+    expect(m.get(3)).toMatchObject({ experience: 0, open: 0, done: 0 }); // closed sprint is history
   });
 });
