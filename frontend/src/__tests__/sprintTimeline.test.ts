@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTimeline } from '../sprintTimeline';
+import { buildTimeline, criticalPath, laneGaps } from '../sprintTimeline';
 import type { Issue, Module, Relation } from '../types';
 
 const mod = (id: number) => ({ id } as Module);
@@ -31,5 +31,19 @@ describe('buildTimeline', () => {
   it('survives dependency cycles', () => {
     const rel: Relation[] = [{ id: 1, sourceId: 1, targetId: 2, label: null, color: null }, { id: 2, sourceId: 2, targetId: 1, label: null, color: null }];
     expect(buildTimeline([task(10, 1, 1), task(11, 2, 2)], [mod(1), mod(2)], rel).length).toBe(1);
+  });
+});
+
+describe('laneGaps and criticalPath', () => {
+  const rel: Relation[] = [{ id: 1, sourceId: 1, targetId: 2, label: null, color: null }];
+  const tl = buildTimeline([task(10, 1, 1, 2), task(11, 2, 2), task(12, 1, 2)], [mod(1), mod(2)], rel);
+
+  it('reports the idle stretch of a waiting owner', () => {
+    // owner 2 does #12 at step 0, then idles at step 1 until #10 finishes at 2.
+    expect(laneGaps(tl)).toEqual([{ lane: 2, start: 1, length: 1 }]);
+  });
+
+  it('marks the chain that sets the finish', () => {
+    expect([...criticalPath(tl)].sort()).toEqual([10, 11]);
   });
 });
