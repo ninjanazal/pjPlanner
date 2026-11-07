@@ -35,9 +35,9 @@ export function jiraImportRoutes(app: FastifyInstance, db: Database.Database) {
           unlinked.set(k, [...(unlinked.get(k) ?? []), r.id]);
         }
         let created = 0, updated = 0, linked = 0;
-        const ins = db.prepare('INSERT INTO issues (project_id, type, title, description, state, jira_key, jira_synced_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-        // Jira does not tell when work happened, so imports never record a close time (see jiraTiming); the row's own sync time
-        // moves with the import so a later project-wide import cannot hide a Jira edit made to an issue it did not touch.
+        const ins = db.prepare('INSERT INTO issues (project_id, type, title, description, state, jira_key, jira_synced_at, updated_at, closed_at, closed_owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        // A close seen by the import is stamped with the sync time (jiraTiming). The row's own sync time moves with the import,
+        // so a later project-wide import cannot hide a Jira edit made to an issue it did not touch.
         const upd = db.prepare('UPDATE issues SET jira_key = ?, type = ?, title = ?, description = ?, state = ?, closed_at = ?, closed_owner_id = ?, reopen_count = ?, updated_at = ?, jira_synced_at = ? WHERE id = ?');
         const rowOf = db.prepare('SELECT * FROM issues WHERE id = ?');
         // Only tasks carry a module, assignee, sprint and estimate.
@@ -49,10 +49,12 @@ export function jiraImportRoutes(app: FastifyInstance, db: Database.Database) {
             if (existing !== undefined) linked++;
           }
           if (existing === undefined) {
-            ids.set(i.key, Number(ins.run(pid, i.type, i.title, i.description, i.state, i.key, syncedAt, jiraTiming(null, i.state).now).lastInsertRowid));
+            const fresh = jiraTiming(null, i.state);
+            ids.set(i.key, Number(ins.run(pid, i.type, i.title, i.description, i.state, i.key, syncedAt, fresh.now, fresh.closedAt, fresh.closedOwner).lastInsertRowid));
             created++;
           } else {
             const tm = jiraTiming(rowOf.get(existing), i.state);
+            if (i.type !== 'task') tm.closedOwner = null; // only tasks have an owner (cleared below)
             upd.run(i.key, i.type, i.title, i.description, i.state, tm.closedAt, tm.closedOwner, tm.reopens, tm.now, syncedAt, existing);
             if (i.type !== 'task') clear.run(existing);
             ids.set(i.key, existing);

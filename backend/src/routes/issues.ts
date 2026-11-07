@@ -24,15 +24,17 @@ export function timing(existing: any | null, state: string, ownerId: number | nu
   return { started, closedAt, closedOwner, reopens, now };
 }
 
-// Columns that follow a state pulled from Jira. Jira does not say when work happened, so a close time and closer are never
-// recorded (kept if already closed, cleared on leaving closed), but a reopen is still counted.
-export function jiraTiming(existing: any | null, state: string) {
+// Columns that follow a state pulled from Jira. Jira does not say when work happened, so a close seen by a sync is stamped
+// with the sync time (`now`) and the issue's current owner; already closed keeps its values, leaving closed clears both and
+// counts a reopen.
+export function jiraTiming(existing: any | null, state: string, now = nowSql()) {
   const closed = state === 'closed';
+  const wasClosed = existing?.state === 'closed';
   return {
-    closedAt: closed ? existing?.closed_at ?? null : null,
-    closedOwner: closed ? existing?.closed_owner_id ?? null : null,
-    reopens: (existing?.reopen_count ?? 0) + (existing?.state === 'closed' && !closed ? 1 : 0),
-    now: nowSql(),
+    closedAt: closed ? (wasClosed ? existing?.closed_at ?? null : now) : null,
+    closedOwner: closed ? (wasClosed ? existing?.closed_owner_id ?? null : existing?.owner_id ?? null) : null,
+    reopens: (existing?.reopen_count ?? 0) + (wasClosed && !closed ? 1 : 0),
+    now,
   };
 }
 
