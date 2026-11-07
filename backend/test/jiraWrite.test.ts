@@ -1237,7 +1237,9 @@ describe('refresh from Jira', () => {
     expect(r.body.issue.state).toBe('open');
     expect(r.body.issue.closedAt).toBeNull();
     st.existing = jiraSide({ status: 'Done', cat: 'done' });
-    expect((await refresh(p.id, t.id)).body.issue.closedAt).toBeNull();
+    const again = (await refresh(p.id, t.id)).body.issue;
+    expect(again.closedAt).toBeTruthy();
+    expect(again.reopenCount).toBe(1);
   });
 
   it('records Jira\'s updated so the next update does not conflict', async () => {
@@ -1399,12 +1401,88 @@ describe('review fixes', () => {
     expect(mapState('In Test', 'indeterminate')).toBe('test_validation');
   });
 
-  it('jiraTiming counts a reopen, clears the closer, and never invents a close time', async () => {
+  it('jiraTiming counts a reopen, clears the closer, and stamps a close seen from Jira', async () => {
     const { jiraTiming } = await import('../src/routes/issues.js');
     const closed = { state: 'closed', closed_at: '2026-01-01 00:00:00', closed_owner_id: 3, reopen_count: 1 };
     expect(jiraTiming(closed, 'open')).toMatchObject({ closedAt: null, closedOwner: null, reopens: 2 });
     expect(jiraTiming(closed, 'closed')).toMatchObject({ closedAt: '2026-01-01 00:00:00', closedOwner: 3, reopens: 1 });
-    expect(jiraTiming({ state: 'open', reopen_count: 0 }, 'closed')).toMatchObject({ closedAt: null, closedOwner: null, reopens: 0 });
+    expect(jiraTiming({ state: 'open', owner_id: 7, reopen_count: 0 }, 'closed', 'T')).toMatchObject({ closedAt: 'T', closedOwner: 7, reopens: 0 });
+    expect(jiraTiming(null, 'closed', 'T')).toMatchObject({ closedAt: 'T', closedOwner: null });
+  });
+
+  describe('close stamped by a Jira pull', () => {
+    const done = { status: { name: 'Done', statusCategory: { key: 'done' } }, updated: '2031-01-01T00:00:00.000+0000' };
+    const imp = (pid: number) => api('POST', `/api/projects/${pid}/jira/import`);
+    const all = async (pid: number) => (await api('GET', `/api/issues?project=${pid}`)).body as any[];
+    const setOwner = async (pid: number, i: any) => {
+      const o = (await api('POST', `/api/owners?project=${pid}`, { name: 'O' })).body;
+      const r = await api('PUT', `/api/issues/${i.id}?project=${pid}`, { type: i.type, title: i.title, description: '', state: i.state, moduleId: mods.get(pid), ownerId: o.id });
+      if (r.status !== 200) throw new Error(JSON.stringify(r.body));
+      return o;
+    };
+
+    it('import insert of an already-closed issue stamps the time, no owner', async () => {
+      env(); stub({ issues: [jiraIssue('KEY-1', 'Task', 'T', done)] });
+      const p = await project({ jiraJql: 'a = b' });
+      expect((await imp(p.id)).status).toBe(200);
+      const [i] = await all(p.id);
+      expect(i).toMatchObject({ state: 'closed', closedOwnerId: null });
+      expect(i.closedAt).toBeTruthy();
+    });
+
+    it('import update stamps the closer for an owned task, keeps it while closed, clears on reopen', async () => {
+      env(); stub({ issues: [jiraIssue('KEY-1', 'Task', 'T')] });
+      const p = await project({ jiraJql: 'a = b' });
+      await imp(p.id);
+      const [t0] = await all(p.id);
+      await mk(p.id, 'task', 'x'); // makes the module
+      const o = await setOwner(p.id, t0);
+      st.issues = [jiraIssue('KEY-1', 'Task', 'T', done)];
+      await imp(p.id);
+      const closed = (await all(p.id)).find((i) => i.id === t0.id);
+      expect(closed).toMatchObject({ state: 'closed', closedOwnerId: o.id });
+      expect(closed.closedAt).toBeTruthy();
+      await imp(p.id);
+      expect((await all(p.id)).find((i) => i.id === t0.id)).toMatchObject({ closedAt: closed.closedAt, closedOwnerId: o.id });
+      st.issues = [jiraIssue('KEY-1', 'Task', 'T')];
+      await imp(p.id);
+      expect((await all(p.id)).find((i) => i.id === t0.id)).toMatchObject({ state: 'code_review', closedAt: null, closedOwnerId: null, reopenCount: 1 });
+    });
+
+    it('a task retyped by Jira and closed leaves no stale closer', async () => {
+      env(); stub({ issues: [jiraIssue('KEY-1', 'Task', 'T')] });
+      const p = await project({ jiraJql: 'a = b' });
+      await imp(p.id);
+      const [t0] = await all(p.id);
+      await mk(p.id, 'task', 'x');
+      await setOwner(p.id, t0);
+      st.issues = [jiraIssue('KEY-1', 'Story', 'T', done)];
+      await imp(p.id);
+      const s = (await all(p.id)).find((i) => i.id === t0.id);
+      expect(s).toMatchObject({ type: 'story', state: 'closed', ownerId: null, closedOwnerId: null });
+      expect(s.closedAt).toBeTruthy();
+    });
+
+    it('upload adopt of a closed Jira issue stamps the close and the owner of an owned task', async () => {
+      env(); stub({ issues: [jiraIssue('KEY-8', 'Task', 'Owned', done)] });
+      const p = await project({ jiraLabel: 'pj-track' });
+      const t = await mk(p.id, 'task', 'Owned');
+      const o = await setOwner(p.id, t);
+      const r = await upload(p.id, t.id);
+      expect(r.body.adopted).toBe(true);
+      expect(r.body.issue).toMatchObject({ state: 'closed', closedOwnerId: o.id });
+      expect(r.body.issue.closedAt).toBeTruthy();
+    });
+
+    it('upload adopt of a closed Jira issue stamps the close', async () => {
+      env(); stub({ issues: [jiraIssue('KEY-7', 'Story', 'S', done)] });
+      const p = await project({ jiraLabel: 'pj-track' });
+      const s = await mk(p.id, 'story', 'S');
+      const r = await upload(p.id, s.id);
+      expect(r.body.adopted).toBe(true);
+      expect(r.body.issue.state).toBe('closed');
+      expect(r.body.issue.closedAt).toBeTruthy();
+    });
   });
 
   it('update compares Jira against the issue\'s own sync time', async () => {

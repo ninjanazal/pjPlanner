@@ -8,3 +8,6 @@ data/
 .maestro/
 *.log
 .tools/
+
+# team-chat plugin
+.claude/teams/
