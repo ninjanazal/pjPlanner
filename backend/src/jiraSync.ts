@@ -41,9 +41,15 @@ export function effectiveJql(jql: string | null, label: string | null): string {
 export type LocalType = 'epic' | 'story' | 'bug' | 'task';
 const TYPES: Record<string, LocalType> = {
   epic: 'epic', 'business epic': 'epic', story: 'story', bug: 'bug', defect: 'bug',
-  task: 'task', 'sub-task': 'task', subtask: 'task', 'major task': 'task', 'new feature': 'task',
+  'new bug': 'bug', 'bug report': 'bug',
+  task: 'task', 'sub-task': 'task', subtask: 'task', 'major task': 'task', 'new feature': 'task', 'refactor task': 'task', improvement: 'task',
 };
-export const mapType = (jiraType: string): LocalType | null => TYPES[jiraType.toLowerCase()] ?? null;
+// Exact names first; then any other name with the word "bug" is a bug and with the word "task" a task (instances add their own
+// variants, e.g. "New Bug", "Sub-Task Purchases"). Anything else has no equivalent and is skipped.
+export function mapType(jiraType: string): LocalType | null {
+  const n = jiraType.trim().toLowerCase();
+  return TYPES[n] ?? (/\bbugs?\b/.test(n) ? 'bug' : /\b(sub-?)?tasks?\b/.test(n) ? 'task' : null);
+}
 
 // Jira statuses are free-form, so a done category means closed and the name decides the review stages ("Waiting Code Review",
 // "Validating", "In Test"...); everything else is plain open.

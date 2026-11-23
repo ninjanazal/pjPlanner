@@ -300,3 +300,16 @@ describe('planImport issue links', () => {
     expect(plan.issues.map((i) => i.parentKey)).toEqual([null, 'A-1', null]);
   });
 });
+
+describe('mapType', () => {
+  it('maps instance-specific bug and task types and still skips the rest', async () => {
+    const { mapType, planImport } = await import('../src/jiraSync.js');
+    expect(['Bug', 'Defect', 'New Bug', 'Bug Report', 'production bug'].map(mapType)).toEqual(['bug', 'bug', 'bug', 'bug', 'bug']);
+    expect(['Task', 'Sub-Task', 'Refactor Task', 'Improvement', 'Sub-Task Purchases'].map(mapType)).toEqual(['task', 'task', 'task', 'task', 'task']);
+    expect(['Meeting', 'Milestone', 'Debugger', ''].map(mapType)).toEqual([null, null, null, null]);
+    const mk = (key: string, type: string) => ({ key, fields: { summary: key, issuetype: { name: type }, status: { name: 'To Do' } } });
+    const plan = planImport([mk('A-1', 'New Bug'), mk('A-2', 'Meeting')], { epicLink: null, parentLink: null, epicName: null });
+    expect(plan.issues.map((i) => i.type)).toEqual(['bug']);
+    expect(plan.skipped).toEqual({ Meeting: 1 });
+  });
+});
