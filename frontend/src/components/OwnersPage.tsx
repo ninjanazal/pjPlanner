@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { fuzzyFilter } from '../fuzzy';
 import { formatDuration, moduleExperience, ownerLoads, tally, timeMetrics } from '../metrics';
 import { ownerHash, type OwnerRef } from '../route';
-import type { Graph, Issue, Sprint } from '../types';
+import { isWorkType, type Graph, type Issue, type Sprint } from '../types';
 import { Bar } from './MetricParts';
 import { OwnerPage } from './OwnerPage';
 
@@ -23,7 +23,7 @@ export function OwnersPage({ graph, issues = [], sprints = [], ownerRef = null, 
     const loads = ownerLoads(issues, graph.owners);
     const speed = timeMetrics(issues, graph.owners, graph.modules).owners;
     const stats = graph.owners.map((o) => {
-      const mine = issues.filter((i) => i.type === 'task' && i.ownerId === o.id);
+      const mine = issues.filter((i) => isWorkType(i.type) && i.ownerId === o.id);
       const load = loads.find((l) => l.owner.id === o.id);
       return { o, modules: graph.modules.filter((m) => exp.get(m.id)?.has(o.id)).length, tally: tally(mine), open: load?.open ?? 0, remaining: load?.remaining ?? 0, speed: speed.find((s) => s.owner.id === o.id) };
     });

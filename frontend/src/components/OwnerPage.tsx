@@ -5,7 +5,7 @@ import { formatDuration, ownerMetrics, ownerWeeks, tally, timeMetrics } from '..
 import { randomIcon } from '../randomIcon';
 import { issueHash, ownerHash } from '../route';
 import { withOwner } from '../sprintGroups';
-import { STATE_LABEL, type Graph, type Issue, type Module, type Owner, type Sprint } from '../types';
+import { STATE_LABEL, isWorkType, type Graph, type Issue, type Module, type Owner, type Sprint } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 import { StateBadge } from './IssuesPage';
 import { ColorField, IconField } from './LookFields';
@@ -53,7 +53,7 @@ export function OwnerPage({ owner, graph, issues, sprints, onChanged, onOpenModu
   const link = (hash: string) => ({ href: hash, onClick: (e: React.MouseEvent) => { e.preventDefault(); go(hash); } });
   const leave = (hash: string) => { flushSync(() => { setDraft(null); setConfirm(null); }); window.location.hash = hash; };
 
-  const mine = owner ? issues.filter((i) => i.type === 'task' && i.ownerId === owner.id) : [];
+  const mine = owner ? issues.filter((i) => isWorkType(i.type) && i.ownerId === owner.id) : [];
 
   const stats = owner ? ownerMetrics(issues, graph.owners, graph.modules, sprints, owner.id) : null;
   const time = useMemo(() => (owner ? timeMetrics(issues, graph.owners, graph.modules) : null), [owner, issues, graph.owners, graph.modules]);

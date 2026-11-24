@@ -69,7 +69,7 @@ describe('Jira write buttons', () => {
     const b = show(epic, [epic], project());
     expect(await screen.findByRole('button', { name: 'Upload to Jira' })).toBeInTheDocument();
     b.unmount();
-    for (const type of ['epic', 'story', 'bug'] as const) {
+    for (const type of ['epic', 'story'] as const) {
       const parent = issue(1, { type, jiraKey: 'PJ-9' }); const child = issue(2, { type: 'task', parentId: 1 });
       const c = show(child, [parent, child], project());
       expect(await screen.findByRole('button', { name: 'Upload to Jira' })).toBeInTheDocument();

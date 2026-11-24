@@ -1,12 +1,12 @@
-import type { Issue, IssueInput, Module, Owner } from './types';
+import { isWorkType, type Issue, type IssueInput, type Module, type Owner } from './types';
 
 export type GroupBy = 'module' | 'owner' | 'epic' | 'none';
 export interface IssueGroup { key: string; label: string; issues: Issue[] }
 
-// Epics, stories and bugs only group other issues: they never appear as sprint work, but an epic can be the grouping itself.
-export const isWork = (i: Issue) => i.type === 'task';
+// Epics and stories only group other issues: they never appear as sprint work, but an epic can be the grouping itself.
+export const isWork = (i: Issue) => isWorkType(i.type);
 
-// The epic an issue belongs to, directly or through a story or a bug.
+// The epic an issue belongs to, directly or through a story.
 export function epicOf(i: Issue, all: Issue[]): Issue | undefined {
   const p = all.find((x) => x.id === i.parentId);
   return p?.type === 'epic' ? p : p ? epicOf(p, all) : undefined;

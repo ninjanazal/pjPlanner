@@ -10,17 +10,18 @@ describe('heatmap', () => {
   it('counts a sprint\'s tasks per module, relative to the busiest', () => {
     const h = sprintHeat([
       mk(1, { sprintId: 1, moduleId: 1 }), mk(2, { sprintId: 1, moduleId: 1 }), mk(3, { sprintId: 1, moduleId: 1, state: 'closed' }),
-      mk(4, { sprintId: 1, moduleId: 2 }), mk(5, { sprintId: 2, moduleId: 2 }), mk(6, { sprintId: 1 }), mk(7, { type: 'bug', sprintId: 1, moduleId: 3 }),
+      mk(4, { sprintId: 1, moduleId: 2 }), mk(5, { sprintId: 2, moduleId: 2 }), mk(6, { sprintId: 1 }), mk(7, { type: 'bug', sprintId: 1, moduleId: 3 }), mk(8, { type: 'story', sprintId: 1, moduleId: 4 }),
     ], 1);
     expect(h.get(1)).toEqual({ open: 2, done: 1, level: 1 });
     expect(h.get(2)).toEqual({ open: 1, done: 0, level: 0.5 });
-    expect(h.has(3)).toBe(false);
+    expect(h.get(3)).toEqual({ open: 1, done: 0, level: 0.5 }); // a bug is work like a task
+    expect(h.has(4)).toBe(false); // a story only groups
     expect(heatColor(0)).not.toBe(heatColor(1));
   });
-  it('finds a task\'s epic directly or through a bug or a story', () => {
-    const all = [mk(1, { type: 'epic' }), mk(2, { type: 'bug', parentId: 1 }), mk(3, { parentId: 2 }), mk(4, { parentId: 1 }), mk(5),
+  it('finds a work item\'s epic directly or through a story', () => {
+    const all = [mk(1, { type: 'epic' }), mk(2, { type: 'bug', parentId: 1 }), mk(3, { type: 'bug', parentId: 6 }), mk(4, { parentId: 1 }), mk(5),
       mk(6, { type: 'story', parentId: 1 }), mk(7, { parentId: 6 }), mk(8, { type: 'story' }), mk(9, { parentId: 8 })];
-    expect([3, 4, 5, 7, 9].map((i) => epicOf(all.find((x) => x.id === i)!, all)?.id)).toEqual([1, 1, undefined, 1, undefined]);
+    expect([2, 3, 4, 5, 7, 9].map((i) => epicOf(all.find((x) => x.id === i)!, all)?.id)).toEqual([1, 1, 1, undefined, 1, undefined]);
   });
 });
 

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { api } from '../api';
 import { childTypes } from '../issueTree';
-import { TYPE_ICON, type Issue, type IssueType, type Module, type Owner } from '../types';
+import { TYPE_ICON, isWorkType, type Issue, type IssueType, type Module, type Owner } from '../types';
 import { Modal } from './Modal';
 import { EstimatePicker } from './EstimatePicker';
 import { ModulePicker } from './ModulePicker';
@@ -19,7 +19,7 @@ export function BreakdownDialog({ parent, modules, onClose, onChanged }: Props) 
   const focusLast = useRef(false);
   const add = () => { focusLast.current = true; setRows((x) => [...x, blank()]); };
   const filled = rows.filter((r) => r.title.trim());
-  const missing = filled.filter((r) => r.type === 'task' && r.moduleId == null).length;
+  const missing = filled.filter((r) => isWorkType(r.type) && r.moduleId == null).length;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,7 +30,7 @@ export function BreakdownDialog({ parent, modules, onClose, onChanged }: Props) 
       for (const r of filled) {
         await api.createIssue({
           type: r.type, title: r.title.trim(), parentId: parent.id, ...(r.description.trim() ? { description: r.description.trim() } : {}),
-          ...(r.type === 'task' ? { moduleId: r.moduleId, estimate: r.estimate, ...(r.implementation.trim() ? { implementation: r.implementation.trim() } : {}) } : {}),
+          ...(isWorkType(r.type) ? { moduleId: r.moduleId, estimate: r.estimate, ...(r.implementation.trim() ? { implementation: r.implementation.trim() } : {}) } : {}),
         });
         created++;
       }
@@ -59,10 +59,10 @@ export function BreakdownDialog({ parent, modules, onClose, onChanged }: Props) 
                 {types.map((t) => <button type="button" key={t} className={`pick${r.type === t ? ' on' : ''}`} aria-pressed={r.type === t} onClick={() => patch(i, { type: t })}><span aria-hidden="true">{TYPE_ICON[t]}</span> {t}</button>)}
               </div>
             )}
-            {r.type === 'task' && <label className="bd-est">Module (required)
+            {isWorkType(r.type) && <label className="bd-est">Module (required)
               <ModulePicker modules={modules} value={r.moduleId} required label={`Module ${i + 1}`} onChange={(moduleId) => patch(i, { moduleId })} />
             </label>}
-            {r.type === 'task' && <>
+            {isWorkType(r.type) && <>
               <textarea className="bd-text" aria-label={`Implementation notes ${i + 1}`} rows={2} placeholder="Implementation tips: approach, files to touch, pitfalls, how to test (optional)" value={r.implementation}
                 onChange={(e) => patch(i, { implementation: e.target.value })} />
               <div className="bd-est"><span className="bd-lbl">Estimate</span>
@@ -74,7 +74,7 @@ export function BreakdownDialog({ parent, modules, onClose, onChanged }: Props) 
         <button type="button" onClick={add}>+ Add another</button>
         {error && <p className="error" role="alert">{error}</p>}
         <div className="row modal-actions">
-          <button type="submit" className="primary" disabled={filled.length === 0 || missing > 0} title={missing > 0 ? 'Every task needs a module' : undefined}>Create {filled.length || ''} {filled.length === 1 ? 'issue' : 'issues'}</button>
+          <button type="submit" className="primary" disabled={filled.length === 0 || missing > 0} title={missing > 0 ? 'Every task and bug needs a module' : undefined}>Create {filled.length || ''} {filled.length === 1 ? 'issue' : 'issues'}</button>
           <button type="button" onClick={onClose}>Cancel</button>
         </div>
       </form>

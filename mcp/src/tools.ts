@@ -120,7 +120,7 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
         api.request<Array<{ id: number; type: string; title: string; state: string; ownerId: number | null; moduleId: number | null; sprintId: number | null; estimate?: number | null }>>("GET", "/issues"),
         api.request<{ modules: { id: number; name: string }[]; owners: { id: number; name: string }[]; relations: { sourceId: number; targetId: number }[] }>("GET", "/graph"),
       ]);
-      const tasks = issues.filter((i) => i.type === "task" && i.sprintId === sprint.id);
+      const tasks = issues.filter((i) => (i.type === "task" || i.type === "bug") && i.sprintId === sprint.id);
       const tl = buildTimeline(tasks, graph.modules, graph.relations);
       return {
         sprint: sprint.name,
@@ -245,7 +245,7 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
   }));
   server.tool(
     "create_issue",
-    "Create an issue. Hierarchy: epic has no parent; a story's or bug's parent is an epic; a task's parent is an epic, a story or a bug. Only epics, stories and bugs can have children. A task must have a moduleId (exactly one module, required on create; it cannot be cleared later). Only tasks take an ownerId or moduleId, and the ownerId must be one of the moduleId module's owners (so set the module first); epics, stories and bugs reject both (they touch the modules of their tasks).",
+    "Create an issue. Hierarchy: an epic has no parent; a story has no parent or an epic; a bug or task has no parent, an epic or a story. Only epics and stories can have children; nothing sits under a bug or task. Only tasks and bugs (work items) carry moduleId, ownerId, sprintId, estimate and implementation; epics and stories only group. A task or bug must have a moduleId (exactly one module, required on create; it cannot be cleared later). The ownerId must be one of the moduleId module's owners (so set the module first); epics and stories reject moduleId, ownerId and sprintId.",
     {
       type: z.enum(["epic", "story", "bug", "task"]),
       title: z.string(),
@@ -315,7 +315,7 @@ export function registerTools(server: McpServer, api: PlannerApi, opts: { write:
   );
   server.tool(
     "auto_assign_sprint",
-    "Give every unassigned open task of a sprint an owner: all tasks of one story or bug go to one person, preferring whoever closed the most tasks in those modules and balancing the workload. reset=true first clears the owners of open tasks and re-deals them with some randomness, so repeating it gives another split.",
+    "Give every unassigned open task of a sprint an owner: all tasks and bugs of one story go to one person (a task or bug with no story is its own unit), preferring whoever closed the most tasks in those modules and balancing the workload. reset=true first clears the owners of open tasks and re-deals them with some randomness, so repeating it gives another split.",
     { id, reset: z.boolean().optional() },
     wrap(({ id, reset }) => api.request("POST", `/sprints/${id}/assign${reset ? "?reset=1&shuffle=1" : ""}`)),
   );

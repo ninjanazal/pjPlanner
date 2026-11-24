@@ -33,7 +33,7 @@ export function descendantIds(issues: Issue[], id: number): Set<number> {
 }
 
 const PARENT_TYPES: Record<IssueType, IssueType[]> = {
-  epic: [], story: ['epic'], bug: ['epic'], task: ['epic', 'story', 'bug'],
+  epic: [], story: ['epic'], bug: ['epic', 'story'], task: ['epic', 'story'],
 };
 
 // Valid parents for `type`, excluding the issue being edited and its descendants.

@@ -1,4 +1,4 @@
-import type { Issue, Module, Sprint } from './types';
+import { isWorkType, type Issue, Module, Sprint } from './types';
 import { moduleExperience } from './metrics';
 
 export interface Heat { open: number; done: number; level: number } // level 0 (cold) .. 1 (hottest module)
@@ -7,7 +7,7 @@ export interface Heat { open: number; done: number; level: number } // level 0 (
 export function sprintHeat(issues: Issue[], sprintId: number): Map<number, Heat> {
   const by = new Map<number, Heat>();
   for (const i of issues) {
-    if (i.type !== 'task' || i.sprintId !== sprintId || i.moduleId == null) continue;
+    if (!isWorkType(i.type) || i.sprintId !== sprintId || i.moduleId == null) continue;
     const h = by.get(i.moduleId) ?? { open: 0, done: 0, level: 0 };
     if (i.state !== 'closed') h.open++; else h.done++;
     by.set(i.moduleId, h);
@@ -28,7 +28,7 @@ export function ownerMap(issues: Issue[], modules: Module[], sprints: Sprint[], 
   const exp = moduleExperience(issues);
   const by = new Map<number, OwnerLoad>(modules.map((m) => [m.id, { experience: exp.get(m.id)?.get(ownerId) ?? 0, open: 0, done: 0, color }]));
   for (const i of issues) {
-    if (i.type !== 'task' || i.ownerId !== ownerId || i.moduleId == null || i.sprintId == null || !live.has(i.sprintId)) continue;
+    if (!isWorkType(i.type) || i.ownerId !== ownerId || i.moduleId == null || i.sprintId == null || !live.has(i.sprintId)) continue;
     const l = by.get(i.moduleId);
     if (l) { if (i.state !== 'closed') l.open++; else l.done++; }
   }

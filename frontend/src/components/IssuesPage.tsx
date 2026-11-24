@@ -1,6 +1,6 @@
 import { createContext, useContext, useState } from 'react';
 import { api } from '../api';
-import { ISSUE_STATES, ISSUE_TYPES, STATE_LABEL, TYPE_ICON, type Issue, type IssueState, type IssueType, type Module, type Owner, type Project, type Sprint } from '../types';
+import { ISSUE_STATES, isWorkType, ISSUE_TYPES, STATE_LABEL, TYPE_ICON, type Issue, type IssueState, type IssueType, type Module, type Owner, type Project, type Sprint } from '../types';
 import { buildTree, childTypes, filterTree, hideClosed, parentOptions, type IssueNode } from '../issueTree';
 import { NO_FILTER, isFiltering, matchesFilter, usePersisted, type IssueFilter } from '../issueFilters';
 import { FilterBar } from './FilterBar';
@@ -160,11 +160,11 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
   const parentId = options.some((o) => o.id === f.parentId) ? f.parentId : null;
   const num = (v: string) => (v ? Number(v) : null);
 
-  const needsModule = f.type === 'task' && f.moduleId == null;
+  const needsModule = isWorkType(f.type) && f.moduleId == null;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (needsModule) return;
-    const body = { ...f, parentId, ...(f.type === 'task' ? {} : { implementation: '', ownerId: null, moduleId: null, sprintId: null, estimate: undefined }) };
+    const body = { ...f, parentId, ...(isWorkType(f.type) ? {} : { implementation: '', ownerId: null, moduleId: null, sprintId: null, estimate: undefined }) };
     if (await run(() => (issue ? api.updateIssue(issue.id, body) : api.createIssue(body)))) onChanged();
   };
   const del = async () => {
@@ -182,7 +182,7 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
         </label>
         <label>Title<input data-autofocus aria-label="Title" value={f.title} onChange={(e) => set('title', e.target.value)} /></label>
         <label>Description<textarea aria-label="Description" rows={3} value={f.description} onChange={(e) => set('description', e.target.value)} /></label>
-        {f.type === 'task' && <label>Implementation notes<textarea aria-label="Implementation notes" rows={3} placeholder="Approach, pitfalls, how to test, links…" value={f.implementation} onChange={(e) => set('implementation', e.target.value)} /></label>}
+        {isWorkType(f.type) && <label>Implementation notes<textarea aria-label="Implementation notes" rows={3} placeholder="Approach, pitfalls, how to test, links…" value={f.implementation} onChange={(e) => set('implementation', e.target.value)} /></label>}
         {f.type !== 'epic' && (
           <label>Parent
             <select aria-label="Parent" value={parentId ?? ''} onChange={(e) => set('parentId', num(e.target.value))}>
@@ -191,19 +191,19 @@ export function IssueDialog({ issue, issues, sprints = [], modules, owners, onCl
             </select>
           </label>
         )}
-        {f.type === 'task' && <label>Module (required)
+        {isWorkType(f.type) && <label>Module (required)
           <ModulePicker modules={modules} value={f.moduleId} required onChange={(moduleId) => set('moduleId', moduleId)} />
         </label>}
-        {f.type === 'task' && <div className="field"><span className="field-label">Estimate (steps)</span>
+        {isWorkType(f.type) && <div className="field"><span className="field-label">Estimate (steps)</span>
           <EstimatePicker value={f.estimate} onChange={(v) => set('estimate', v)} />
         </div>}
-        {f.type === 'task' && <label>Sprint
+        {isWorkType(f.type) && <label>Sprint
           <select aria-label="Sprint" value={f.sprintId ?? ''} onChange={(e) => set('sprintId', num(e.target.value))}>
             <option value="">Backlog (no sprint)</option>
             {sprints.filter((sp) => sp.state !== 'closed' || sp.id === init.sprintId).map((sp) => <option key={sp.id} value={sp.id}>{sp.name}{sp.state === 'active' ? ' (active)' : ''}</option>)}
           </select>
         </label>}
-        {f.type === 'task' && issue && <label>Assignee
+        {isWorkType(f.type) && issue && <label>Assignee
           <select aria-label="Assignee" value={f.ownerId ?? ''} disabled={owners.length === 0} onChange={(e) => set('ownerId', num(e.target.value))}>
             <option value="">{owners.length === 0 ? 'No owners yet' : 'Unassigned'}</option>
             {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}

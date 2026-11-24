@@ -1,15 +1,15 @@
 ---
 name: pjplanner-breakdown
-description: Break a pjPlanner epic, story or bug into well-segmented tasks through the pjplanner MCP tools. Use when the user asks to break down, split, plan or create tasks for a story or epic.
+description: Break a pjPlanner epic or story into well-segmented tasks through the pjplanner MCP tools. Use when the user asks to break down, split, plan or create tasks for a story or epic.
 ---
 
 # Break an issue down into tasks
 
-Turn one epic, story or bug in pjPlanner into a small set of tasks, each tied to the module it changes. Requires the pjplanner MCP server with write access (`PJPLANNER_API_KEY`). If the tools are missing, tell the user to install the MCP from pjPlanner's "MCP" button and stop.
+Turn one epic or story in pjPlanner into a small set of tasks, each tied to the module it changes. Requires the pjplanner MCP server with write access (`PJPLANNER_API_KEY`). If the tools are missing, tell the user to install the MCP from pjPlanner's "MCP" button and stop.
 
 ## Steps
 
-1. **Pick the parent.** Use the issue the user names (id or title). Otherwise call `list_issues` for open epics, stories and bugs, and ask which one. Call `get_issue` for its description and any tasks that already exist under it. Never duplicate, rewrite or delete existing tasks; propose only what is missing.
+1. **Pick the parent.** Use the issue the user names (id or title). Otherwise call `list_issues` for open epics and stories, and ask which one. Bugs are leaf work items, not parents. Call `get_issue` for its description and any tasks that already exist under it. Never duplicate, rewrite or delete existing tasks; propose only what is missing.
 2. **Understand it.** Read the issue text, call `get_graph` (modules, owners, relations, test status, API items), and skim the repository code the issue touches. Use `find_dependencies` with `downstream` on each likely module to see what else a change can break.
 3. **Ask questions.** One focused round, only about what you cannot work out: unclear scope, acceptance criteria, what is out of scope, constraints, preferred owners or sprint. Use the question tool when you have it, otherwise a short numbered list. Skip this step when the issue is already clear.
 4. **Propose the modules.** List the modules that need to change, each with the reason, plus modules that depend on them and may be affected. Let the user add or remove modules before you go on. If the work needs a module that does not exist, say so and point to `/pjplanner-map`; this skill does not create modules.

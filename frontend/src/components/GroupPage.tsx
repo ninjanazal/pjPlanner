@@ -5,7 +5,7 @@ import { groupLabel, subtreeIds } from '../groupBoxes';
 import { tally } from '../metrics';
 import { randomIcon } from '../randomIcon';
 import { groupHash, issueHash } from '../route';
-import { STATE_LABEL, type Graph, type Group, type Issue, type Module } from '../types';
+import { STATE_LABEL, isWorkType, type Graph, type Group, type Issue, type Module } from '../types';
 import { ConfirmDialog } from './ConfirmDialog';
 import { StateBadge } from './IssuesPage';
 import { ColorField, IconField } from './LookFields';
@@ -60,7 +60,7 @@ export function GroupPage({ group, graph, issues, onChanged, onOpenModule }: Pro
   const tree = group ? subtreeIds(groups, group.id) : new Set<number>();
   const all = group ? graph.modules.filter((m) => m.groupId != null && tree.has(m.groupId)) : [];
   const ids = new Set(all.map((m) => m.id));
-  const tasks = issues.filter((i) => i.type === 'task' && i.moduleId != null && ids.has(i.moduleId));
+  const tasks = issues.filter((i) => isWorkType(i.type) && i.moduleId != null && ids.has(i.moduleId));
   const t = tally(tasks);
   const tests = { full: 0, partial: 0, none: 0, unknown: 0 };
   all.forEach((m) => { tests[m.testStatus ?? 'unknown']++; });

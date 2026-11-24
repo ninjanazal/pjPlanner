@@ -44,7 +44,7 @@ export function sprintStore(db: Database.Database) {
     return { name, goal: (b.goal as string | undefined) ?? existing?.goal ?? '', state };
   };
   // Gives every unassigned open task of a sprint an owner, balancing the team. Rules:
-  //  1. tasks under the same story or bug form one unit and go to one person; any other task is a unit of its own;
+  //  1. tasks and bugs under the same story form one unit and go to one person; any other task or bug is a unit of its own;
   //  2. if a task of the unit already has an owner (in any sprint), the rest of the unit follows that owner;
   //  3. otherwise the owner with the best score wins: the work already carried in this sprint (sum of task estimates, 1 step
   //     when unset) minus an experience bonus, i.e. the tasks that owner closed before in the unit's modules (saturating,
@@ -54,8 +54,8 @@ export function sprintStore(db: Database.Database) {
   const balanceOwners = (sid: number, onlyId?: number, shuffle = false) => {
     const people = (db.prepare('SELECT id FROM owners WHERE project_id = ? ORDER BY id').all(P()) as { id: number }[]).map((o) => o.id);
     if (people.length === 0) return;
-    const rows = db.prepare("SELECT id, owner_id, parent_id, module_id, estimate FROM issues WHERE sprint_id = ? AND type = 'task' AND state <> 'closed' ORDER BY id").all(sid) as any[];
-    const groupParent = db.prepare("SELECT 1 FROM issues WHERE id = ? AND type IN ('story', 'bug')");
+    const rows = db.prepare("SELECT id, owner_id, parent_id, module_id, estimate FROM issues WHERE sprint_id = ? AND type IN ('task', 'bug') AND state <> 'closed' ORDER BY id").all(sid) as any[];
+    const groupParent = db.prepare("SELECT 1 FROM issues WHERE id = ? AND type = 'story'");
     const unitOf = (r: any) => (r.parent_id != null && groupParent.get(r.parent_id) ? `p${r.parent_id}` : `t${r.id}`);
     const weight = (r: any) => r.estimate ?? 1;
     const load = new Map<number, number>(people.map((o) => [o, 0]));
@@ -63,14 +63,14 @@ export function sprintStore(db: Database.Database) {
 
     // closed tasks per owner and module: who has fixed things in a module before
     const done = new Map<string, number>();
-    for (const r of db.prepare("SELECT COALESCE(closed_owner_id, owner_id) AS o, module_id AS m, COUNT(*) AS n FROM issues WHERE project_id = ? AND type = 'task' AND state = 'closed' AND COALESCE(closed_owner_id, owner_id) IS NOT NULL AND module_id IS NOT NULL GROUP BY o, m").all(P()) as any[]) done.set(`${r.o}:${r.m}`, r.n);
+    for (const r of db.prepare("SELECT COALESCE(closed_owner_id, owner_id) AS o, module_id AS m, COUNT(*) AS n FROM issues WHERE project_id = ? AND type IN ('task', 'bug') AND state = 'closed' AND COALESCE(closed_owner_id, owner_id) IS NOT NULL AND module_id IS NOT NULL GROUP BY o, m").all(P()) as any[]) done.set(`${r.o}:${r.m}`, r.n);
     const bonus = (o: number, u: any[]) => {
       const n = [...new Set(u.map((r) => r.module_id).filter((m) => m != null))].reduce((t, m) => t + (done.get(`${o}:${m}`) ?? 0), 0);
       return (EXPERIENCE_BONUS * n) / (n + EXPERIENCE_HALF);
     };
     const units = new Map<string, any[]>();
     for (const r of rows) units.set(unitOf(r), [...(units.get(unitOf(r)) ?? []), r]);
-    const heldBy = db.prepare("SELECT owner_id, COUNT(*) AS n FROM issues WHERE parent_id = ? AND type = 'task' AND state <> 'closed' AND owner_id IS NOT NULL GROUP BY owner_id ORDER BY n DESC, owner_id");
+    const heldBy = db.prepare("SELECT owner_id, COUNT(*) AS n FROM issues WHERE parent_id = ? AND type IN ('task', 'bug') AND state <> 'closed' AND owner_id IS NOT NULL GROUP BY owner_id ORDER BY n DESC, owner_id");
     const set = db.prepare('UPDATE issues SET owner_id = ? WHERE id = ?');
     const todo = [...units.entries()]
       .map(([key, members]) => ({ key, members, open: members.filter((r) => r.owner_id == null && (onlyId == null || r.id === onlyId)), tie: shuffle ? Math.random() : 0 }))
@@ -103,7 +103,7 @@ export function sprintRoutes(app: FastifyInstance, db: Database.Database) {
     getSprint(sid);
     // ?reset=1 starts over: open tasks are cleared first, so everything is dealt out afresh.
     if ((req.query as any)?.reset === '1') {
-      db.prepare("UPDATE issues SET owner_id = NULL WHERE sprint_id = ? AND type = 'task' AND state = 'open'").run(sid);
+      db.prepare("UPDATE issues SET owner_id = NULL WHERE sprint_id = ? AND type IN ('task', 'bug') AND state = 'open'").run(sid);
     }
     balanceOwners(sid, undefined, (req.query as any)?.shuffle === '1');
     return getSprint(sid);
@@ -113,7 +113,7 @@ export function sprintRoutes(app: FastifyInstance, db: Database.Database) {
     const sid = id((req.params as any).id);
     const sp = getSprint(sid);
     if (sp.state === 'closed') throw bad('a closed sprint keeps its owners');
-    db.prepare("UPDATE issues SET owner_id = NULL WHERE sprint_id = ? AND type = 'task' AND state = 'open'").run(sid);
+    db.prepare("UPDATE issues SET owner_id = NULL WHERE sprint_id = ? AND type IN ('task', 'bug') AND state = 'open'").run(sid);
     return getSprint(sid);
   });
   app.put('/api/sprints/:id', async (req) => {

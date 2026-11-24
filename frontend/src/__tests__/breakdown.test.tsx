@@ -14,8 +14,8 @@ afterEach(() => vi.unstubAllGlobals());
 describe('breakdown', () => {
   it('knows what each type can contain', () => {
     expect(childTypes('epic')).toEqual(['story', 'bug', 'task']);
-    expect(childTypes('story')).toEqual(['task']);
-    expect(childTypes('bug')).toEqual(['task']);
+    expect(childTypes('story')).toEqual(['bug', 'task']);
+    expect(childTypes('bug')).toEqual([]);
     expect(childTypes('task')).toEqual([]);
   });
   it('creates one child per filled row with its module, skipping blanks', async () => {

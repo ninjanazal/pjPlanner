@@ -1,10 +1,10 @@
 import { descendantIds } from './issueTree';
-import type { Issue, IssueType, Module, Owner, Relation, Sprint } from './types';
+import { isWorkType, type Issue, IssueType, Module, Owner, Relation, Sprint } from './types';
 
 // Everything here is derived from the current issues, sprints and modules: the data has no history yet, so these are
-// snapshots (where the work stands), not trends. A task's size is its estimate in steps (1 when unset).
+// snapshots (where the work stands), not trends. A work item's (task or bug) size is its estimate in steps (1 when unset).
 export const stepsOf = (i: Issue) => i.estimate ?? 1;
-const isTask = (i: Issue) => i.type === 'task';
+const isTask = (i: Issue) => isWorkType(i.type); // a bug is work like a task
 const unfinished = (i: Issue) => i.state !== 'closed';
 
 export interface Tally {

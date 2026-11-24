@@ -85,8 +85,8 @@ let pn = 0;
 const project = async (o: any = {}) => (await api('POST', '/api/projects', { name: `P${pn++}`, jiraWrite: true, jiraEnabled: true, jiraProjectId: '10000', ...o })).body;
 const mods = new Map<number, number>();
 const mk = async (pid: number, type: string, title: string, parentId?: number) => {
-  if (type === 'task' && !mods.has(pid)) mods.set(pid, (await api('POST', `/api/modules?project=${pid}`, { name: 'M' })).body.id);
-  return (await api('POST', `/api/issues?project=${pid}`, { type, title, description: `${title} desc`, ...(type === 'task' ? { moduleId: mods.get(pid) } : {}), ...(parentId ? { parentId } : {}) })).body;
+  if ((type === 'task' || type === 'bug') && !mods.has(pid)) mods.set(pid, (await api('POST', `/api/modules?project=${pid}`, { name: 'M' })).body.id);
+  return (await api('POST', `/api/issues?project=${pid}`, { type, title, description: `${title} desc`, ...(type === 'task' || type === 'bug' ? { moduleId: mods.get(pid) } : {}), ...(parentId ? { parentId } : {}) })).body;
 };
 const upload = (pid: number, iid: number, headers?: any) => api('POST', `/api/issues/${iid}/jira/upload?project=${pid}`, undefined, headers);
 const update = (pid: number, iid: number, payload?: any, headers?: any) => api('POST', `/api/issues/${iid}/jira/update?project=${pid}`, payload, headers);
@@ -269,9 +269,9 @@ describe('upload payloads (AC2)', () => {
     }
   });
 
-  it('task under a story or bug is a Task linked to the parent (Relates by default), never a Sub-task', async () => {
+  it('task under a story is a Task linked to the parent (Relates by default), never a Sub-task', async () => {
     const p = await project();
-    for (const type of ['story', 'bug']) {
+    for (const type of ['story']) {
       const par = await mk(p.id, type, `p-${type}`); await upload(p.id, par.id);
       const t = await mk(p.id, 'task', `t-${type}`, par.id);
       st.calls.length = 0;
@@ -752,7 +752,7 @@ describe('root issues upload', () => {
     expect((await post(p.id, i.id)).status).toBe(200);
   });
 
-  it.each(['epic', 'story', 'bug'])('a task under a Jira %s is still uploaded', async (type) => {
+  it.each(['epic', 'story'])('a task under a Jira %s is still uploaded', async (type) => {
     stub();
     const p = await project(); const parent = await mk(p.id, type, 'P'); await upload(p.id, parent.id);
     const t = await mk(p.id, 'task', 'T', parent.id);
@@ -814,12 +814,12 @@ describe('upload form (preview)', () => {
     expect(st.calls.some((c) => c.url.includes('/project/OTHER'))).toBe(false);
   });
 
-  it('link line and default type: epic child, linked Task under story and bug', async () => {
+  it('link line and default type: epic child, linked Task under story', async () => {
     stub();
     const p = await project(); const e = await mk(p.id, 'epic', 'E'); await upload(p.id, e.id);
     const s = await mk(p.id, 'story', 'S', e.id);
     expect((await form(p.id, s.id)).body).toMatchObject({ issueType: { name: 'Story' }, link: { kind: 'epic', parentKey: 'KEY-100', label: 'In epic KEY-100' } });
-    for (const type of ['story', 'bug']) {
+    for (const type of ['story']) {
       const par = await mk(p.id, type, `p-${type}`); await upload(p.id, par.id);
       const key = (await api('GET', `/api/issues/${par.id}?project=${p.id}`)).body.jiraKey;
       const t = await mk(p.id, 'task', `t-${type}`, par.id);
