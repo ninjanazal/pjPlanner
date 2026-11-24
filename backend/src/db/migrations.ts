@@ -60,12 +60,13 @@ export function migrateIssueStates(db: Database.Database) {
   if ((db.pragma('foreign_key_check') as unknown[]).length) throw new Error('foreign key check failed after issues migration');
 }
 
-// Subtask was removed: it becomes a task. A task left under a task, or a bug/story under a non-epic, moves up to the nearest valid parent.
+// Subtask was removed: it becomes a task. Bugs and tasks are leaves: a task under a task or bug, a bug under a task or bug, or a
+// story under a non-epic moves up to the nearest valid parent.
 export function migrateIssueTypes(db: Database.Database) {
   db.transaction(() => {
     db.exec("UPDATE issues SET type = 'task' WHERE type = 'subtask'");
     const bad = db.prepare(`SELECT c.id, p.parent_id AS up FROM issues c JOIN issues p ON p.id = c.parent_id
-      WHERE (c.type = 'task' AND p.type = 'task') OR (c.type IN ('bug', 'story') AND p.type <> 'epic')`);
+      WHERE (c.type IN ('task', 'bug') AND p.type IN ('task', 'bug')) OR (c.type = 'story' AND p.type <> 'epic')`);
     const move = db.prepare('UPDATE issues SET parent_id = ? WHERE id = ?');
     for (let rows = bad.all() as { id: number; up: number | null }[]; rows.length; rows = bad.all() as { id: number; up: number | null }[]) {
       rows.forEach((r) => move.run(r.up, r.id));

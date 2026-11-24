@@ -5,8 +5,11 @@ import { P } from '../context.js';
 import { Body, obj, str, id } from '../validation.js';
 import { sprintStore } from './sprints.js';
 export const ISSUE_TYPES = ['epic', 'story', 'bug', 'task'];
-// Epics, stories and bugs hold children: an epic holds stories, bugs and tasks; a story or a bug holds tasks.
-export const PARENTS: Record<string, string[]> = { epic: [], story: ['epic'], bug: ['epic'], task: ['epic', 'story', 'bug'] };
+// Only epics and stories group: an epic holds stories, bugs and tasks; a story holds bugs and tasks. Bugs and tasks are leaf work items.
+export const PARENTS: Record<string, string[]> = { epic: [], story: ['epic'], bug: ['epic', 'story'], task: ['epic', 'story'] };
+// Work items carry module, assignee, sprint, estimate and implementation notes; epics and stories only group.
+export const WORK_TYPES = ['task', 'bug'];
+export const isWork = (t: string) => WORK_TYPES.includes(t);
 // open -> code_review -> test_validation -> closed. Anything but closed is unfinished work.
 export const ISSUE_STATES = ['open', 'code_review', 'test_validation', 'closed'];
 
@@ -79,22 +82,24 @@ export function issueStore(db: Database.Database) {
     const state = b.state === undefined ? 'open' : b.state;
     if (typeof state !== 'string' || !ISSUE_STATES.includes(state)) throw bad(`state must be one of ${ISSUE_STATES.join(', ')}`);
     if (b.description !== undefined && typeof b.description !== 'string') throw bad('description must be a string');
-    // implementation (how-to notes): tasks only; omitted keeps the current text.
+    // implementation (how-to notes): tasks and bugs only; omitted keeps the current text.
     if (b.implementation !== undefined && typeof b.implementation !== 'string') throw bad('implementation must be a string');
-    if (b.type !== 'task' && b.implementation) throw bad(`a${b.type === 'epic' ? 'n' : ''} ${b.type} cannot have implementation notes; write them on its tasks`);
-    const implementation = b.type !== 'task' ? '' : ((b.implementation as string | undefined) ?? existing?.implementation ?? '');
+    const work = isWork(b.type);
+    const a = `a${b.type === 'epic' ? 'n' : ''} ${b.type}`; // "an epic" / "a story"
+    if (!work && b.implementation) throw bad(`only tasks and bugs can have implementation notes; write them on a task or bug`);
+    const implementation = !work ? '' : ((b.implementation as string | undefined) ?? existing?.implementation ?? '');
     const type = b.type;
     const parentId = optId(b.parentId, 'parentId');
     const ownerId = optId(b.ownerId, 'ownerId');
     const moduleId = optId(b.moduleId, 'moduleId');
-    // Epics and bugs only group work; the module and the assignee live on the tasks.
-    if (b.type !== 'task' && (ownerId != null || moduleId != null)) throw bad(`a${b.type === 'epic' ? 'n' : ''} ${b.type} cannot have an assignee or a module; set them on its tasks`);
-    // Every task belongs to exactly one module. Old tasks that never had one stay editable; a module cannot be taken away once set.
-    if (b.type === 'task' && moduleId == null && (!existing || existing.type !== 'task' || existing.module_id != null)) throw bad('a task needs a module (moduleId)');
+    // Epics and stories only group work; the module and the assignee live on tasks and bugs.
+    if (!work && (ownerId != null || moduleId != null)) throw bad(`only tasks and bugs can have an assignee or a module; set them on a task or bug (not on ${a})`);
+    // Every task and bug belongs to exactly one module. Old ones that never had one stay editable; a module cannot be taken away once set.
+    if (work && moduleId == null && (!existing || !isWork(existing.type) || existing.module_id != null)) throw bad(`a ${b.type} needs a module (moduleId)`);
     // sprintId: omitted keeps the current sprint (the UI/agents often send a full body), null moves to the backlog.
-    const sprintId = b.type !== 'task' ? null : b.sprintId === undefined ? (existing?.sprint_id ?? null) : optId(b.sprintId, 'sprintId');
-    // Epics and bugs only group tasks, so they are never planned into a sprint (their tasks are).
-    if (b.type !== 'task' && b.sprintId != null) throw bad(`a${b.type === 'epic' ? 'n' : ''} ${b.type} cannot be in a sprint; add its tasks instead`);
+    const sprintId = !work ? null : b.sprintId === undefined ? (existing?.sprint_id ?? null) : optId(b.sprintId, 'sprintId');
+    // Epics and stories only group, so they are never planned into a sprint (their tasks and bugs are).
+    if (!work && b.sprintId != null) throw bad(`only tasks and bugs can be in a sprint; add a task or bug instead (not ${a})`);
     if (sprintId != null && sprintId !== (existing?.sprint_id ?? null)) {
       const sp = db.prepare('SELECT state FROM sprints WHERE id = ? AND project_id = ?').get(sprintId, P()) as { state: string } | undefined;
       if (!sp) throw notFound('Sprint');
@@ -103,7 +108,7 @@ export function issueStore(db: Database.Database) {
     // estimate: omitted keeps the current one, null clears it (counts as 1 step).
     const estimate = b.estimate === undefined ? (existing?.estimate ?? null) : b.estimate;
     if (estimate !== null && (typeof estimate !== 'number' || !Number.isInteger(estimate) || estimate < 1 || estimate > 99)) throw bad('estimate must be a whole number from 1 to 99, or null');
-    if (b.type !== 'task' && b.estimate != null) throw bad(`a${b.type === 'epic' ? 'n' : ''} ${b.type} cannot have an estimate; estimate its tasks`);
+    if (!work && b.estimate != null) throw bad(`only tasks and bugs can have an estimate; estimate a task or bug (not ${a})`);
     const parent = parentId == null ? null : (db.prepare('SELECT * FROM issues WHERE id = ? AND project_id = ?').get(parentId, P()) as any);
     if (parentId != null && !parent) throw notFound('Parent issue');
     if (ownerId != null && !db.prepare('SELECT 1 FROM owners WHERE id = ? AND project_id = ?').get(ownerId, P())) throw notFound('Owner');
@@ -120,7 +125,7 @@ export function issueStore(db: Database.Database) {
       const kids = db.prepare('SELECT type FROM issues WHERE parent_id = ?').all(existing.id) as { type: string }[];
       if (kids.some((k) => !PARENTS[k.type].includes(type))) throw bad(`type ${type} is incompatible with existing child issues`);
     }
-    return { type, title, description: (b.description as string | undefined) ?? '', implementation, parentId, ownerId, moduleId, sprintId, state, estimate: b.type === 'task' ? (estimate as number | null) : null };
+    return { type, title, description: (b.description as string | undefined) ?? '', implementation, parentId, ownerId, moduleId, sprintId, state, estimate: work ? (estimate as number | null) : null };
   };
   // A task that lands in a sprint that is already running gets an owner straight away (same rules as starting it).
   const joinedRunningSprint = (sprintId: number | null) => {
@@ -142,13 +147,13 @@ export function issueRoutes(app: FastifyInstance, db: Database.Database) {
     return reply.status(201).send(getIssue(Number(r.lastInsertRowid)));
   });
   app.get('/api/issues/:id', async (req) => getIssue(id((req.params as any).id)));
-  // Picks the best owner for one task with the sprint-balancing rules (it must be an open task in a sprint).
+  // Picks the best owner for one task with the sprint-balancing rules (it must be an open task or bug in a sprint).
   app.post('/api/issues/:id/assign', async (req) => {
     const iid = id((req.params as any).id);
     const row = db.prepare('SELECT * FROM issues WHERE id = ? AND project_id = ?').get(iid, P()) as any;
     if (!row) throw notFound('Issue');
-    if (row.type !== 'task' || row.state === 'closed') throw bad('only an unfinished task can be assigned');
-    if (row.sprint_id == null) throw bad('add the task to a sprint first; owners are balanced within a sprint');
+    if (!isWork(row.type) || row.state === 'closed') throw bad('only an unfinished task or bug can be assigned');
+    if (row.sprint_id == null) throw bad('add the task or bug to a sprint first; owners are balanced within a sprint');
     if (row.owner_id == null) balanceOwners(row.sprint_id, iid);
     return getIssue(iid);
   });

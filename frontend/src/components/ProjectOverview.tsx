@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { formatDuration, projectMetrics, tally, timeMetrics } from '../metrics';
 import { ownerHash } from '../route';
-import type { Graph, Issue, Project, Sprint } from '../types';
+import { isWorkType, type Graph, type Issue, type Project, type Sprint } from '../types';
 import { Bar, Donut, Kpi, PairBars, Ring } from './MetricParts';
 
 interface Props { project: Project | null; graph: Graph; issues: Issue[]; sprints: Sprint[] }
@@ -15,7 +15,7 @@ const STATE_COLORS = { open: 'var(--accent)', review: '#d29922', validation: '#8
 export function ProjectOverview({ project, graph, issues, sprints }: Props) {
   const m = useMemo(() => projectMetrics(issues, graph.owners, graph.modules, sprints, graph.relations), [issues, graph, sprints]);
   const tm = useMemo(() => timeMetrics(issues, graph.owners, graph.modules), [issues, graph.owners, graph.modules]);
-  const work = useMemo(() => graph.owners.map((owner) => ({ owner, t: tally(issues.filter((i) => i.type === 'task' && i.ownerId === owner.id)) }))
+  const work = useMemo(() => graph.owners.map((owner) => ({ owner, t: tally(issues.filter((i) => isWorkType(i.type) && i.ownerId === owner.id)) }))
     .sort((a, b) => a.owner.name.localeCompare(b.owner.name)), [issues, graph.owners]);
   const overloaded = m.owners.filter((o) => o.overloaded);
   const openBugs = m.byType.bug.total - m.byType.bug.closed;

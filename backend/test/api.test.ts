@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildApp } from '../src/app.js';
 import { timing } from '../src/routes/issues.js';
+import { openDb } from '../src/db/open.js';
+import { migrateIssueTypes } from '../src/db/migrations.js';
 
 let app: ReturnType<typeof buildApp>;
 // A fresh database has no project; the suite works inside one called "Test" (the oldest, so no header is needed).
@@ -13,15 +15,15 @@ beforeEach(async () => {
   await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Test' } });
 });
 
-// Every task needs a module: a task created without a `moduleId` key gets a shared default one (pass `moduleId: null` to test the rule itself).
+// Every task and bug needs a module: one created without a `moduleId` key gets a shared default one (pass `moduleId: null` to test the rule itself).
 let defaultModule: number | null = null;
 beforeEach(() => { defaultModule = null; });
 const call = async (method: any, url: string, payload?: any) => {
-  if (method === 'POST' && url === '/api/issues' && payload?.type === 'task' && !('moduleId' in payload)) {
+  if (method === 'POST' && url === '/api/issues' && (payload?.type === 'task' || payload?.type === 'bug') && !('moduleId' in payload)) {
     if (defaultModule == null) defaultModule = (await app.inject({ method: 'POST', url: '/api/modules', payload: { name: 'Default module' } })).json().id;
     payload = { ...payload, moduleId: defaultModule };
   }
-  if (method === 'PUT' && /^\/api\/issues\/\d+$/.test(url) && payload?.type === 'task' && !('moduleId' in payload)) {
+  if (method === 'PUT' && /^\/api\/issues\/\d+$/.test(url) && (payload?.type === 'task' || payload?.type === 'bug') && !('moduleId' in payload)) {
     const cur = (await app.inject({ method: 'GET', url })).json();
     payload = { ...payload, moduleId: cur.moduleId };
   }
@@ -259,10 +261,31 @@ describe('api', () => {
       expect((await call('POST', `/api/sprints/${s}/unassign`)).status).toBe(400);
     });
 
-    it('keeps bugs and epics out of sprints', async () => {
+    it('keeps epics and stories out of sprints; bugs can join one', async () => {
       const s = (await sp('S')).body.id;
-      expect((await call('POST', '/api/issues', { type: 'bug', title: 'B', sprintId: s })).status).toBe(400);
-      expect((await call('POST', '/api/issues', { type: 'bug', title: 'B' })).status).toBe(201);
+      expect((await call('POST', '/api/issues', { type: 'epic', title: 'E', sprintId: s })).status).toBe(400);
+      expect((await call('POST', '/api/issues', { type: 'story', title: 'S', sprintId: s })).status).toBe(400);
+      expect((await call('POST', '/api/issues', { type: 'story', title: 'S' })).status).toBe(201);
+      expect((await call('POST', '/api/issues', { type: 'bug', title: 'B', sprintId: s })).body.sprintId).toBe(s);
+    });
+
+    it('activating a sprint assigns an unowned bug; closing sends an open bug back to the backlog', async () => {
+      await owner('A');
+      const s = (await sp('S')).body.id;
+      const b = (await call('POST', '/api/issues', { type: 'bug', title: 'B', sprintId: s })).body;
+      expect(b.ownerId).toBeNull();
+      await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'active' });
+      expect((await call('GET', `/api/issues/${b.id}`)).body.ownerId).toBe(1);
+      await call('PUT', `/api/sprints/${s}`, { name: 'S', state: 'closed' });
+      expect((await call('GET', `/api/issues/${b.id}`)).body.sprintId).toBeNull();
+    });
+
+    it('unassign clears an open bug like a task', async () => {
+      const a = await owner('A');
+      const s = (await sp('S')).body.id;
+      const b = (await call('POST', '/api/issues', { type: 'bug', title: 'B', sprintId: s, ownerId: a.id })).body;
+      await call('POST', `/api/sprints/${s}/unassign`);
+      expect((await call('GET', `/api/issues/${b.id}`)).body.ownerId).toBeNull();
     });
 
     it('creates and lists with counts', async () => {
@@ -825,7 +848,7 @@ describe('issues', () => {
     const o = await owner('O');
     const m = await mod('M');
     expect((await issue('epic', 'E', { ownerId: o.id })).status).toBe(400);
-    expect((await issue('bug', 'B', { moduleId: m.id })).status).toBe(400);
+    expect((await issue('story', 'S', { moduleId: m.id })).status).toBe(400);
     const r = await issue('task', '  E  ', { ownerId: o.id, moduleId: m.id });
     expect(r.status).toBe(201);
     expect(r.body).toEqual({ id: 1, type: 'task', title: 'E', description: '', implementation: '', parentId: null, ownerId: o.id, moduleId: m.id, sprintId: null, estimate: null, state: 'open', jiraKey: null, childIds: [], rollupModuleIds: [m.id], createdAt: expect.stringMatching(/Z$/), startedAt: null, closedAt: null, closedOwnerId: null, reopenCount: 0, updatedAt: expect.stringMatching(/Z$/) });
@@ -853,28 +876,36 @@ describe('issues', () => {
     const bare = await app.inject({ method: 'POST', url: '/api/issues', payload: { type: 'task', title: 'x' } });
     expect(bare.statusCode).toBe(400);
     expect(bare.json().error.message).toBe('a task needs a module (moduleId)');
+    const bareBug = await app.inject({ method: 'POST', url: '/api/issues', payload: { type: 'bug', title: 'x' } });
+    expect(bareBug.statusCode).toBe(400);
+    expect(bareBug.json().error.message).toBe('a bug needs a module (moduleId)');
+    expect((await call('POST', '/api/issues', { type: 'bug', title: 'x', moduleId: null })).status).toBe(400);
     expect((await call('POST', '/api/issues', { type: 'task', title: 'x', moduleId: null })).status).toBe(400);
   });
 
   it('enforces hierarchy rules on create', async () => {
     const e = await mk('epic', 'E');
     const b = await mk('bug', 'B', { parentId: e.id });
-    const t = await issue('task', 'T', { parentId: b.id });
+    const t = await issue('task', 'T', { parentId: e.id });
     expect(t.status).toBe(201);
-    expect((await issue('epic', 'E2', { parentId: e.id })).status).toBe(400);
+    expect((await issue('task', 'T2', { parentId: b.id })).status).toBe(400); // nothing sits under a bug
     expect((await issue('bug', 'B2', { parentId: b.id })).status).toBe(400);
+    expect((await issue('epic', 'E2', { parentId: e.id })).status).toBe(400);
     expect((await issue('task', 'x', { parentId: t.body.id })).status).toBe(400);
-    expect((await issue('subtask', 's', { parentId: b.id })).status).toBe(400);
-    expect((await call('GET', `/api/issues/${b.id}`)).body.childIds).toEqual([t.body.id]);
+    expect((await issue('bug', 'x', { parentId: t.body.id })).status).toBe(400);
+    expect((await issue('subtask', 's', { parentId: e.id })).status).toBe(400);
+    expect((await call('GET', `/api/issues/${b.id}`)).body.childIds).toEqual([]);
+    expect((await call('GET', `/api/issues/${e.id}`)).body.childIds).toEqual([b.id, t.body.id]);
   });
 
-  it('estimate: tasks only, 1-99, kept when omitted, survives export/import', async () => {
+  it('estimate: tasks and bugs only, 1-99, kept when omitted, survives export/import', async () => {
     const t = await issue('task', 'T', { estimate: 3 });
     expect(t.body.estimate).toBe(3);
     expect((await issue('task', 'U')).body.estimate).toBeNull();
     expect((await issue('task', 'bad', { estimate: 0 })).status).toBe(400);
     expect((await issue('task', 'bad', { estimate: 1.5 })).status).toBe(400);
-    expect((await issue('bug', 'B', { estimate: 2 })).status).toBe(400);
+    expect((await issue('bug', 'B', { estimate: 2 })).body.estimate).toBe(2);
+    expect((await issue('story', 'S', { estimate: 2 })).status).toBe(400);
     const kept = await call('PUT', `/api/issues/${t.body.id}`, { type: 'task', title: 'T2' });
     expect(kept.body.estimate).toBe(3);
     expect((await call('PUT', `/api/issues/${t.body.id}`, { type: 'task', title: 'T2', estimate: null })).body.estimate).toBeNull();
@@ -897,10 +928,11 @@ describe('issues', () => {
     expect((await issue('story', 'S3', { parentId: b.id })).status).toBe(400); // not under a bug
     expect((await issue('epic', 'E2', { parentId: st.body.id })).status).toBe(400);
     const o = await owner('O'); const m = await mod('M');
-    expect((await issue('story', 'x', { moduleId: m.id })).body.error.message).toBe('a story cannot have an assignee or a module; set them on its tasks');
+    expect((await issue('story', 'x', { moduleId: m.id })).body.error.message).toBe('only tasks and bugs can have an assignee or a module; set them on a task or bug (not on a story)');
+    expect((await issue('epic', 'x', { ownerId: o.id })).body.error.message).toContain('not on an epic');
     const sp = (await call('POST', '/api/sprints', { name: 'S' })).body;
     expect((await issue('story', 'x', { sprintId: sp.id })).status).toBe(400);
-    expect((await issue('bug', 'x', { parentId: st.body.id })).body.error.message).toBe('a bug parent must be an epic');
+    expect((await issue('bug', 'x', { parentId: st.body.id })).status).toBe(201); // a bug may sit under a story
     expect((await issue('task', 'x', { parentId: 99 })).status).toBe(404);
     // roll-up through a story: the epic sees the modules of tasks under its story
     const t = await issue('task', 'T2', { parentId: st.body.id, moduleId: m.id });
@@ -913,12 +945,14 @@ describe('issues', () => {
   it('enforces rules when changing type or parent via PUT', async () => {
     const e = await mk('epic', 'E');
     const b = await mk('bug', 'B', { parentId: e.id });
-    const t = await mk('task', 'T', { parentId: b.id });
+    const t = await mk('task', 'T', { parentId: e.id });
     const put = (i: any, x: any) => call('PUT', `/api/issues/${i.id}`, { title: i.title, ...x });
     expect((await put(b, { type: 'epic', parentId: e.id })).status).toBe(400); // an epic has no parent
-    expect((await put(t, { type: 'bug', parentId: b.id })).status).toBe(400); // bug only under an epic
-    expect((await put(e, { type: 'task' })).status).toBe(400); // child bug not allowed under a task
-    expect((await put(b, { type: 'task' })).status).toBe(400); // child task not allowed under a task
+    expect((await put(t, { type: 'bug', parentId: b.id })).status).toBe(400); // nothing under a bug
+    expect((await put(t, { type: 'task', parentId: b.id })).status).toBe(400);
+    expect((await put(e, { type: 'task' })).status).toBe(400); // child bug/task not allowed under a task
+    expect((await put(e, { type: 'bug' })).status).toBe(400);
+    expect((await put(b, { type: 'task' })).status).toBe(200); // bug <-> task is fine
     expect((await put(t, { type: 'task', parentId: e.id })).status).toBe(200);
   });
 
@@ -932,8 +966,7 @@ describe('issues', () => {
     const e = await mk('epic', 'E');
     const t1 = await mk('task', 't1', { parentId: e.id, moduleId: m2.id });
     await mk('task', 't2', { parentId: e.id, moduleId: m2.id });
-    const bg = await mk('bug', 'g', { parentId: e.id });
-    await mk('task', 't3', { parentId: bg.id, moduleId: m1.id });
+    const bg = await mk('bug', 'g', { parentId: e.id, moduleId: m1.id });
     await mk('task', 't4', { parentId: e.id, moduleId: m3.id });
     expect((await call('GET', `/api/issues/${e.id}`)).body.rollupModuleIds).toEqual([m1.id, m2.id, m3.id]);
     expect((await call('GET', `/api/issues/${bg.id}`)).body.rollupModuleIds).toEqual([m1.id]);
@@ -941,9 +974,9 @@ describe('issues', () => {
 
   it('orphans children on delete', async () => {
     const e = await mk('epic', 'E');
-    const b = await mk('bug', 'B', { parentId: e.id });
-    const t = await mk('task', 'T', { parentId: b.id });
-    await call('DELETE', `/api/issues/${b.id}`);
+    const st = await mk('story', 'S', { parentId: e.id });
+    const t = await mk('task', 'T', { parentId: st.id });
+    await call('DELETE', `/api/issues/${st.id}`);
     expect((await call('GET', `/api/issues/${t.id}`)).body).toMatchObject({ type: 'task', parentId: null });
     expect((await call('GET', `/api/issues/${e.id}`)).body.childIds).toEqual([]);
     expect((await call('PUT', `/api/issues/${t.id}`, { type: 'task', title: 'renamed' })).status).toBe(200);
@@ -960,6 +993,74 @@ describe('issues', () => {
     const list = (await a.inject({ method: 'GET', url: '/api/issues' })).json();
     expect(list.map((x: any) => [x.id, x.type, x.parentId])).toEqual([[1, 'epic', null], [2, 'story', 1], [3, 'task', 2], [4, 'task', 2]]);
     await a.close();
+  });
+
+  it('a bug is a leaf work item: owner, module, sprint, estimate and implementation', async () => {
+    const o = await owner('O'); const m = await mod('M');
+    const sp = (await call('POST', '/api/sprints', { name: 'S' })).body;
+    const e = await mk('epic', 'E');
+    const r = await issue('bug', 'B', { parentId: e.id, ownerId: o.id, moduleId: m.id, sprintId: sp.id, estimate: 4, implementation: 'fix it' });
+    expect(r.status).toBe(201);
+    expect(r.body).toMatchObject({ type: 'bug', ownerId: o.id, moduleId: m.id, sprintId: sp.id, estimate: 4, implementation: 'fix it', rollupModuleIds: [m.id] });
+    expect((await call('GET', `/api/issues/${e.id}`)).body.rollupModuleIds).toEqual([m.id]);
+    // omitted sprint/estimate/implementation are kept on a full update
+    const put = await call('PUT', `/api/issues/${r.body.id}`, { type: 'bug', title: 'B2', ownerId: o.id });
+    expect(put.body).toMatchObject({ title: 'B2', sprintId: sp.id, estimate: 4, implementation: 'fix it', moduleId: m.id });
+    expect((await call('PUT', `/api/issues/${r.body.id}`, { type: 'bug', title: 'B2', moduleId: null })).status).toBe(400);
+    // a bug without a module is refused
+    const bare = await app.inject({ method: 'POST', url: '/api/issues', payload: { type: 'bug', title: 'x' } });
+    expect(bare.statusCode).toBe(400);
+    // epics and stories still cannot carry implementation notes
+    expect((await issue('story', 'S', { implementation: 'x' })).body.error.message).toBe('only tasks and bugs can have implementation notes; write them on a task or bug');
+    // a bug can sit under a story; nothing sits under a bug
+    const st = await mk('story', 'St', { parentId: e.id });
+    expect((await issue('bug', 'B3', { parentId: st.id, moduleId: m.id })).status).toBe(201);
+    expect((await issue('task', 'T', { parentId: r.body.id })).status).toBe(400);
+    expect((await issue('bug', 'B4', { parentId: r.body.id })).status).toBe(400);
+    // a bug can be assigned within its sprint like a task
+    const b2 = await mk('bug', 'B5', { sprintId: sp.id });
+    expect((await call('POST', `/api/issues/${b2.id}/assign`)).status).toBe(200);
+    expect((await call('POST', `/api/issues/${e.id}/assign`)).status).toBe(400);
+  });
+
+  it('migration lifts a task or bug out from under a bug or task, idempotently', async () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pj-')), 'm.db');
+    const first = buildApp(file); await first.close();
+    const raw = openDb(file);
+    raw.exec(`INSERT INTO issues (type, title, parent_id) VALUES ('epic','E',NULL),('bug','B',1),('task','T',2),('task','T2',3),('story','S',1),('bug','B2',5),('task','T3',6);`);
+    migrateIssueTypes(raw);
+    migrateIssueTypes(raw);
+    const rows = () => (raw.prepare('SELECT id, type, parent_id FROM issues ORDER BY id').all() as any[]).map((r) => [r.id, r.type, r.parent_id]);
+    // T and T2 end up under the epic; B2 stays under its story, and so does T3 (lifted out from under B2)
+    expect(rows()).toEqual([[1, 'epic', null], [2, 'bug', 1], [3, 'task', 1], [4, 'task', 1], [5, 'story', 1], [6, 'bug', 5], [7, 'task', 5]]);
+    raw.close();
+  });
+
+  it('bug owner, module and sprint survive reopening the database', async () => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'pj-')), 'b.db');
+    const a = buildApp(file);
+    await a.inject({ method: 'POST', url: '/api/projects', payload: { name: 'P' } });
+    const o = (await a.inject({ method: 'POST', url: '/api/owners', payload: { name: 'O' } })).json();
+    const m = (await a.inject({ method: 'POST', url: '/api/modules', payload: { name: 'M' } })).json();
+    const sp = (await a.inject({ method: 'POST', url: '/api/sprints', payload: { name: 'S' } })).json();
+    const b = (await a.inject({ method: 'POST', url: '/api/issues', payload: { type: 'bug', title: 'B', ownerId: o.id, moduleId: m.id, sprintId: sp.id, estimate: 2 } })).json();
+    await a.close();
+    for (let i = 0; i < 2; i++) {
+      const db = openDb(file);
+      expect(db.prepare('SELECT owner_id, module_id, sprint_id, estimate FROM issues WHERE id = ?').get(b.id)).toEqual({ owner_id: o.id, module_id: m.id, sprint_id: sp.id, estimate: 2 });
+      db.close();
+    }
+  });
+
+  it('export and import keep a bug\'s owner, module, sprint and estimate', async () => {
+    const o = await owner('O'); const m = await mod('M');
+    const sp = (await call('POST', '/api/sprints', { name: 'S' })).body;
+    await mk('bug', 'B', { ownerId: o.id, moduleId: m.id, sprintId: sp.id, estimate: 3, implementation: 'how' });
+    const file = (await app.inject({ method: 'GET', url: '/api/projects/1/export' })).body;
+    const imp = JSON.parse((await app.inject({ method: 'POST', url: '/api/projects/import', payload: JSON.parse(file) })).body);
+    const copy = JSON.parse((await app.inject({ method: 'GET', url: '/api/issues', headers: { 'x-project': String(imp.id) } })).body)[0];
+    expect(copy).toMatchObject({ type: 'bug', estimate: 3, implementation: 'how' });
+    expect(copy.ownerId).not.toBeNull(); expect(copy.moduleId).not.toBeNull(); expect(copy.sprintId).not.toBeNull();
   });
 
   it('module delete nulls moduleId, owner delete nulls assignee', async () => {
@@ -1027,7 +1128,7 @@ describe('issues', () => {
       expect(list.map((x: any) => [x.id, x.state, x.parentId, x.ownerId, x.moduleId])).toEqual([
         [1, 'open', null, null, null], [2, 'open', 1, null, null], [3, 'closed', 1, 1, null], // a story carries no module
       ]);
-      expect((await a.inject({ method: 'POST', url: '/api/issues', payload: { type: 'bug', title: 'n' } })).json().state).toBe('open');
+      expect((await a.inject({ method: 'POST', url: '/api/issues', payload: { type: 'epic', title: 'n' } })).json().state).toBe('open');
       await a.close();
       const chk = new Database(file);
       chk.prepare('DELETE FROM issues WHERE id = 4').run();

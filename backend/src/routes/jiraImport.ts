@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import { bad, notFound } from '../errors.js';
 import { id } from '../validation.js';
 import { jira, jiraEnabledGate, viaJira } from './jira.js';
-import { jiraTiming } from './issues.js';
+import { jiraTiming, isWork } from './issues.js';
 import { migrateIssueTypes } from '../db/migrations.js';
 import { effectiveJql, planImport, runFilter } from '../jiraSync.js';
 
@@ -40,7 +40,7 @@ export function jiraImportRoutes(app: FastifyInstance, db: Database.Database) {
         // so a later project-wide import cannot hide a Jira edit made to an issue it did not touch.
         const upd = db.prepare('UPDATE issues SET jira_key = ?, type = ?, title = ?, description = ?, state = ?, closed_at = ?, closed_owner_id = ?, reopen_count = ?, updated_at = ?, jira_synced_at = ? WHERE id = ?');
         const rowOf = db.prepare('SELECT * FROM issues WHERE id = ?');
-        // Only tasks carry a module, assignee, sprint and estimate.
+        // Only tasks and bugs carry a module, assignee, sprint and estimate.
         const clear = db.prepare('UPDATE issues SET owner_id = NULL, module_id = NULL, sprint_id = NULL, estimate = NULL WHERE id = ?');
         for (const i of plan.issues) {
           let existing = known.get(i.key);
@@ -54,9 +54,9 @@ export function jiraImportRoutes(app: FastifyInstance, db: Database.Database) {
             created++;
           } else {
             const tm = jiraTiming(rowOf.get(existing), i.state);
-            if (i.type !== 'task') tm.closedOwner = null; // only tasks have an owner (cleared below)
+            if (!isWork(i.type)) tm.closedOwner = null; // only tasks and bugs have an owner (cleared below)
             upd.run(i.key, i.type, i.title, i.description, i.state, tm.closedAt, tm.closedOwner, tm.reopens, tm.now, syncedAt, existing);
-            if (i.type !== 'task') clear.run(existing);
+            if (!isWork(i.type)) clear.run(existing);
             ids.set(i.key, existing);
             if (known.has(i.key)) updated++;
           }

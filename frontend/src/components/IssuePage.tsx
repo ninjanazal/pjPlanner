@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { api, ApiError } from '../api';
-import { ISSUE_STATES, STATE_LABEL, TYPE_ICON, type Issue, type IssueState, type IssueType, type Module, type Owner, type Project, type Sprint } from '../types';
+import { ISSUE_STATES, isWorkType, STATE_LABEL, TYPE_ICON, type Issue, type IssueState, type IssueType, type Module, type Owner, type Project, type Sprint } from '../types';
 import { childTypes, descendantIds, parentOptions } from '../issueTree';
 import { issueHash, ownerHash } from '../route';
 import { BreakdownDialog } from './BreakdownDialog';
@@ -92,7 +92,7 @@ export function IssuePage({ issue, issues, sprints, modules, owners, onChanged, 
   }
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setDraft({ ...f, [k]: v });
-  const isTask = f.type === 'task';
+  const isTask = isWorkType(f.type);
   const options = parentOptions(issues, f.type, issue.id);
   const parentId = options.some((o) => o.id === f.parentId) ? f.parentId : null;
   const mod = modules.find((m) => m.id === f.moduleId);
@@ -102,21 +102,21 @@ export function IssuePage({ issue, issues, sprints, modules, owners, onChanged, 
   const ancestors: Issue[] = [];
   for (let p = issues.find((i) => i.id === issue.parentId); p && !ancestors.includes(p); p = issues.find((i) => i.id === p!.parentId)) ancestors.unshift(p);
 
-  // Progress counts the tasks underneath (an issue with no tasks counts its direct children), weighted by estimate.
+  // Progress counts the work items underneath (an issue with no tasks counts its direct children), weighted by estimate.
   const below = issues.filter((i) => descendantIds(issues, issue.id).has(i.id));
-  const leaves = below.some((i) => i.type === 'task') ? below.filter((i) => i.type === 'task') : below;
+  const leaves = below.some((i) => isWorkType(i.type)) ? below.filter((i) => isWorkType(i.type)) : below;
   const steps = (i: Issue) => i.estimate ?? 1;
   const totalSteps = leaves.reduce((n, i) => n + steps(i), 0);
   const doneSteps = leaves.filter((i) => i.state === 'closed').reduce((n, i) => n + steps(i), 0);
   const pct = totalSteps ? Math.round((doneSteps / totalSteps) * 100) : 0;
   const rollup = issue.rollupModuleIds.map((id) => modules.find((m) => m.id === id)).filter((m): m is Module => Boolean(m));
 
-  // Every task needs a module; an old task that never had one can still be saved as long as it stays that way.
-  const missingModule = f.type === 'task' && f.moduleId == null && (issue.type !== 'task' || issue.moduleId != null);
+  // Every task and bug needs a module; an old work item that never had one can still be saved as long as it stays that way.
+  const missingModule = isWorkType(f.type) && f.moduleId == null && (!isWorkType(issue.type) || issue.moduleId != null);
   const save = async () => {
     if (!dirty || !draft) return;
     if (!draft.title.trim() || missingModule) return;
-    const body = { ...draft, parentId, ...(draft.type === 'task' ? {} : { implementation: '', ownerId: null, moduleId: null, sprintId: null, estimate: undefined }) };
+    const body = { ...draft, parentId, ...(isWorkType(draft.type) ? {} : { implementation: '', ownerId: null, moduleId: null, sprintId: null, estimate: undefined }) };
     if (await run(() => api.updateIssue(issue.id, body))) { setDraft(null); onChanged(); flash('Changes saved'); }
   };
   saveRef.current = save;

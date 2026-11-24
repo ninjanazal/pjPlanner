@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Issue, Module, Owner, Relation, Sprint } from '../types';
+import { isWorkType, type Issue, Module, Owner, Relation, Sprint } from '../types';
 import { buildTimeline, criticalPath, laneGaps } from '../sprintTimeline';
 import { Modal } from './Modal';
 
@@ -9,7 +9,7 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 export function SprintTimeline({ sprint, issues, modules, owners, relations, onClose }: Props) {
   const [hovered, setHovered] = useState<number | null>(null);
-  const tasks = issues.filter((i) => i.type === 'task' && i.sprintId === sprint.id);
+  const tasks = issues.filter((i) => isWorkType(i.type) && i.sprintId === sprint.id);
   const tl = buildTimeline(tasks, modules, relations);
   const crit = criticalPath(tl);
   const gaps = laneGaps(tl);

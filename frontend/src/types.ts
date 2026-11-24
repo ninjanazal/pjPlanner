@@ -54,6 +54,8 @@ export interface JiraPreview {
 }
 export interface JiraImportResult { jql: string; total: number; created: number; updated: number; linked: number; skipped: Record<string, number>; notInFilter: number }
 export type IssueType = 'epic' | 'story' | 'bug' | 'task';
+// Work items are the leaves that carry module, assignee, sprint and estimate; epics and stories only group.
+export const isWorkType = (t: IssueType) => t === 'task' || t === 'bug';
 export const ISSUE_TYPES: IssueType[] = ['epic', 'story', 'bug', 'task'];
 export const TYPE_ICON: Record<IssueType, string> = { epic: '⚡', story: '📖', bug: '🐞', task: '✔' };
 // open -> code review -> test validation -> closed. Anything but closed is unfinished work.

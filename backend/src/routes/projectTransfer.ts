@@ -8,7 +8,7 @@ import { groupStore } from './groups.js';
 import { moduleStore } from './modules.js';
 import { relationStore } from './relations.js';
 import { SPRINT_STATES } from './sprints.js';
-import { ISSUE_TYPES, ISSUE_STATES, PARENTS } from './issues.js';
+import { ISSUE_TYPES, ISSUE_STATES, PARENTS, isWork } from './issues.js';
 import { projectStore } from './projects.js';
 export function projectTransferRoutes(app: FastifyInstance, db: Database.Database) {
   const { ownerList } = ownerStore(db);
@@ -116,7 +116,7 @@ export function projectTransferRoutes(app: FastifyInstance, db: Database.Databas
           if (typeof i.type !== 'string' || !ISSUE_TYPES.includes(i.type)) throw bad(`issues[${i.id}].type is invalid`);
           const state = i.state === undefined ? 'open' : i.state;
           if (typeof state !== 'string' || !ISSUE_STATES.includes(state)) throw bad(`issues[${i.id}].state is invalid`);
-          const task = i.type === 'task';
+          const task = isWork(i.type as string);
           issueMap.set(i.id as number, Number(iins.run(pid, i.type, str(i.title, 'issue title'), typeof i.description === 'string' ? i.description : '',
             task && typeof i.implementation === 'string' ? i.implementation : '',
             task ? ref(ownerMap, i.ownerId, `issues[${i.id}].ownerId`) : null, task ? ref(modMap, i.moduleId, `issues[${i.id}].moduleId`) : null,

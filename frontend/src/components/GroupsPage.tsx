@@ -3,7 +3,7 @@ import { fuzzyFilter } from '../fuzzy';
 import { groupLabel, subtreeIds } from '../groupBoxes';
 import { tally } from '../metrics';
 import { groupHash, type GroupRef } from '../route';
-import type { Graph, Issue } from '../types';
+import { isWorkType, type Graph, type Issue } from '../types';
 import { GroupPage } from './GroupPage';
 import { Bar } from './MetricParts';
 
@@ -25,7 +25,7 @@ export function GroupsPage({ graph, issues = [], groupRef = null, onChanged, onO
       const tree = subtreeIds(groups, g.id);
       const mods = graph.modules.filter((m) => m.groupId != null && tree.has(m.groupId));
       const ids = new Set(mods.map((m) => m.id));
-      const t = tally(issues.filter((i) => i.type === 'task' && i.moduleId != null && ids.has(i.moduleId)));
+      const t = tally(issues.filter((i) => isWorkType(i.type) && i.moduleId != null && ids.has(i.moduleId)));
       return {
         g, label: groupLabel(groups, g.id), direct: graph.modules.filter((m) => m.groupId === g.id).length, total: mods.length,
         children: groups.filter((c) => c.parentId === g.id).length, t,

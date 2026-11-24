@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { IssuesPage } from '../components/IssuesPage';
+import { IssueDialog, IssuesPage } from '../components/IssuesPage';
 import type { Issue, Module, Owner } from '../types';
 
 const mod = (id: number, name: string): Module => ({
@@ -69,14 +69,32 @@ describe('IssuesPage', () => {
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'epic');
     expect(screen.queryByLabelText('Parent')).toBeNull();
     await userEvent.selectOptions(screen.getByLabelText('Type'), 'task');
-    expect(within(screen.getByLabelText('Parent')).getByText(/Login/)).toBeInTheDocument();
-    await userEvent.selectOptions(screen.getByLabelText('Parent'), '2');
+    expect(within(screen.getByLabelText('Parent')).queryByText(/Login/)).toBeNull(); // nothing sits under a bug
+    await userEvent.selectOptions(screen.getByLabelText('Parent'), '1');
     await userEvent.type(screen.getByLabelText('Module'), 'bll');
     await userEvent.click(within(screen.getByRole('dialog')).getByRole('option', { name: /Billing/ }));
     await userEvent.click(screen.getByText('Create issue'));
     await waitFor(() => expect(changed).toHaveBeenCalled());
     expect(f.mock.calls[0][0]).toBe('/api/issues');
-    expect(JSON.parse(f.mock.calls[0][1].body)).toMatchObject({ type: 'task', title: 'Sub', parentId: 2, moduleId: 2, ownerId: null, state: 'open' });
+    expect(JSON.parse(f.mock.calls[0][1].body)).toMatchObject({ type: 'task', title: 'Sub', parentId: 1, moduleId: 2, ownerId: null, state: 'open' });
+  });
+
+  it('gives a new bug the work fields of a task, with a required module', async () => {
+    const f = mockFetch(201, {});
+    page();
+    await userEvent.click(screen.getByText('Add issue'));
+    await userEvent.type(screen.getByLabelText('Title'), 'Crash');
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'bug');
+    expect(screen.getByLabelText('Module')).toBeInTheDocument();
+    expect(screen.getByLabelText('Sprint')).toBeInTheDocument();
+    expect(screen.getByLabelText('Implementation notes')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Assignee')).toBeNull(); // only when editing
+    expect(screen.getByText('Create issue')).toBeDisabled();
+    await userEvent.click(screen.getByLabelText('Module'));
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('option', { name: /Auth/ }));
+    await userEvent.click(screen.getByText('Create issue'));
+    await waitFor(() => expect(f).toHaveBeenCalled());
+    expect(JSON.parse(f.mock.calls[0][1].body)).toMatchObject({ type: 'bug', title: 'Crash', moduleId: 1 });
   });
 
   it('will not create a task until it has a module', async () => {
@@ -147,14 +165,26 @@ describe('IssuesPage', () => {
       await waitFor(() => expect(onChanged).toHaveBeenCalled());
     });
 
-    it('offers Break down on epics, stories and bugs but not tasks', () => {
-      for (const type of ['epic', 'story', 'bug'] as const) {
+    it('offers Break down on epics and stories but not on bugs or tasks', () => {
+      for (const type of ['epic', 'story'] as const) {
         const { unmount } = render(<IssuesPage issues={[mk({ id: 7, type, title: 'X' })]} modules={modules} owners={owners} issueId={7} onChanged={() => {}} />);
         expect(screen.getByRole('button', { name: 'Break down…' })).toBeInTheDocument();
         unmount();
       }
+      const { unmount } = render(<IssuesPage issues={[mk({ id: 7, type: 'bug', title: 'X', moduleId: 1 })]} modules={modules} owners={owners} issueId={7} onChanged={() => {}} />);
+      expect(screen.queryByRole('button', { name: 'Break down…' })).toBeNull();
+      unmount();
       show();
       expect(screen.queryByRole('button', { name: 'Break down…' })).toBeNull();
+    });
+
+    it('shows a bug the work details of a task: owner, module, sprint, estimate', () => {
+      const bug = mk({ id: 8, type: 'bug', title: 'Crash', moduleId: 1 });
+      render(<IssuesPage issues={[bug]} modules={modules} owners={owners} issueId={8} onChanged={() => {}} />);
+      expect(screen.getByLabelText('Assign owner')).toBeInTheDocument();
+      expect(screen.getByLabelText('Sprint')).toBeInTheDocument();
+      expect(screen.getByLabelText('Implementation notes')).toBeInTheDocument();
+      for (const l of ['Module', 'Estimate']) expect(screen.getByText(l)).toBeInTheDocument();
     });
 
     it('discards the draft', async () => {
@@ -187,5 +217,14 @@ describe('IssuesPage', () => {
       await userEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Discard' }));
       expect(window.location.hash).toBe('#/issues');
     });
+  });
+});
+
+describe('IssueDialog', () => {
+  it('offers a bug the Module, Sprint and (when editing) Assignee fields of a task', () => {
+    const bug = mk({ id: 8, type: 'bug', title: 'Crash', moduleId: 1, ownerId: 1 });
+    render(<IssueDialog issue={bug} issues={[bug]} modules={modules} owners={owners} onClose={() => {}} onChanged={() => {}} />);
+    for (const l of ['Module', 'Sprint', 'Assignee', 'Implementation notes']) expect(screen.getByLabelText(l)).toBeInTheDocument();
+    expect(screen.getByLabelText('Assignee')).toHaveValue('1');
   });
 });

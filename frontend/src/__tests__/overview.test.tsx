@@ -20,7 +20,7 @@ const issues = [
   iss(2, { parentId: 1, moduleId: 1, ownerId: 1, sprintId: 1, estimate: 3, state: 'closed' }),
   iss(3, { parentId: 1, moduleId: 1, ownerId: 1, sprintId: 1, estimate: 9 }),
   iss(4, { parentId: 1, moduleId: 2 }),
-  iss(5, { type: 'bug', title: 'Crash' }),
+  iss(5, { type: 'story', title: 'Crash', parentId: 1 }),
 ];
 const project = { id: 1, name: 'Catrina', description: 'Slot cabinet' } as Project;
 

@@ -46,13 +46,14 @@ describe('projectMetrics', () => {
     { ...t(1), type: 'epic' }, { ...t(2), type: 'story', parentId: 1 },
     t(3, { parentId: 2, moduleId: 1, sprintId: 1, ownerId: 1, estimate: 2, state: 'closed' }),
     t(4, { parentId: 2, moduleId: 1, sprintId: 1 }), t(5, { moduleId: 2, state: 'code_review', ownerId: 2 }),
-    { ...t(6), type: 'bug' },
+    t(6, { type: 'bug', moduleId: 2, sprintId: 1, ownerId: 1, estimate: 3 }),
   ];
   const rels: Relation[] = [{ id: 1, sourceId: 2, targetId: 1, label: null, color: null }];
   const m = projectMetrics(issues, [o(1), o(2)], [mod(1, [1]), mod(2)], [sp(2, 'planned'), sp(1, 'active')], rels);
-  it('counts tasks, in-flight work and gaps', () => {
-    expect(m.tasks).toMatchObject({ tasks: 3, closed: 1, steps: 4, doneSteps: 2, pct: 50 });
+  it('counts tasks and bugs as work, in-flight work and gaps', () => {
+    expect(m.tasks).toMatchObject({ tasks: 4, closed: 1, steps: 7, doneSteps: 2, pct: 29 });
     expect(m).toMatchObject({ inFlight: 1, unassignedOpen: 1, backlogOpen: 1, unestimatedOpen: 2 });
+    expect(m.byType.task).toEqual({ total: 3, closed: 1 });
     expect(m.byType.bug).toEqual({ total: 1, closed: 0 });
   });
   it('orders sprints active first and reports module dependents', () => {

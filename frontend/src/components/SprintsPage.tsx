@@ -23,7 +23,7 @@ export function SprintsPage({ sprints, issues, modules, owners, relations = [], 
   // Per-panel overrides of the default fold ('b' = backlog); groups folded by "panel:group" key.
   const [folds, setFolds] = usePersisted<Record<string, boolean>>('pjplanner.sprints.open', {});
   const [groupsFolded, setGroupsFolded] = usePersisted<string[]>('pjplanner.sprints.groups', []);
-  const allWork = issues.filter(isWork); // epics and bugs only group; tasks are the sprint work
+  const allWork = issues.filter(isWork); // epics and stories only group; tasks and bugs are the sprint work
   const work = allWork.filter((i) => matchesFilter(i, filter, issues));
   const active = sprints.find((s) => s.state === 'active');
   const assignable = sprints.filter((s) => s.state !== 'closed');

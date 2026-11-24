@@ -84,7 +84,7 @@ export function openDb(dbPath: string): Database.Database {
   }
   migrateIssueStates(db);
   migrateIssueTypes(db);
-  db.exec("UPDATE issues SET owner_id = NULL, module_id = NULL WHERE type <> 'task'");
+  db.exec("UPDATE issues SET owner_id = NULL, module_id = NULL WHERE type NOT IN ('task', 'bug')");
   db.exec(`
     CREATE TABLE IF NOT EXISTS sprints (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,7 +116,7 @@ export function openDb(dbPath: string): Database.Database {
   for (const [col, ddl] of [['started_at', 'TEXT'], ['closed_at', 'TEXT'], ['closed_owner_id', 'INTEGER'], ['reopen_count', 'INTEGER NOT NULL DEFAULT 0'], ['updated_at', 'TEXT']]) {
     if (!issueCols.includes(col)) db.exec(`ALTER TABLE issues ADD COLUMN ${col} ${ddl}`);
   }
-  db.exec("UPDATE issues SET sprint_id = NULL WHERE type <> 'task' AND sprint_id IS NOT NULL"); // epics and bugs are never in a sprint
+  db.exec("UPDATE issues SET sprint_id = NULL WHERE type NOT IN ('task', 'bug') AND sprint_id IS NOT NULL"); // epics and stories are never in a sprint
   migrateProjects(db);
   // Jira: the JQL and label a project tracks, and the Jira key an imported issue came from.
   if (!hasColumn(db, 'projects', 'jira_jql')) {
